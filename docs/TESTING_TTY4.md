@@ -1,6 +1,7 @@
 # Testing DRM Backend in TTY4
 
 ## Current Status
+
 ✅ Device initialization complete
 ✅ Connector scanning complete  
 ✅ Output creation complete
@@ -9,12 +10,14 @@
 ## Test Commands
 
 ### Build
+
 ```bash
 cd ~/src/nuthatch-compositor
 cargo build --release
 ```
 
 ### Test in TTY4
+
 ```bash
 # Switch to TTY4: Ctrl+Alt+F4
 sudo RUST_LOG=info ./target/release/nuthatch-compositor --drm --drm-full
@@ -67,6 +70,7 @@ INFO Compositor is running. Press Ctrl+C to exit.
 ## Next Step
 
 Implement frame_finish() to:
+
 1. Allocate framebuffer
 2. Clear to solid color (e.g., blue)
 3. Queue page flip
@@ -75,6 +79,7 @@ Implement frame_finish() to:
 ## Debugging
 
 If anything goes wrong, check:
+
 1. Are you in TTY4? (Ctrl+Alt+F4)
 2. Did you build with --release?
 3. Are you running with sudo?
@@ -84,6 +89,7 @@ If anything goes wrong, check:
 ## Success Criteria
 
 For this test:
+
 - [x] Binary builds successfully
 - [ ] Runs without crashing
 - [ ] Session initializes

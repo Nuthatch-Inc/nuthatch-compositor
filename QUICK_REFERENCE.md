@@ -17,6 +17,7 @@
 ### 1. Test initialization in TTY4 (~30 min)
 
 **What to do:**
+
 ```bash
 cd ~/src/nuthatch-compositor
 cargo build --release
@@ -36,7 +37,7 @@ sudo RUST_LOG=info ./target/release/nuthatch-compositor --drm --drm-full
 Implement:
 
 - DRM surface creation
-- Framebuffer allocation  
+- Framebuffer allocation
 - Clear to solid color (blue/red/green)
 - Queue page flip
 
@@ -88,17 +89,17 @@ sudo RUST_LOG=info ./target/release/nuthatch-compositor --drm --drm-full
 
 **Phase 1: Foundation (95% Complete!) 🚀🔥**
 
-| Task | Status | Details |
-|------|--------|---------|
-| Strategic Planning | ✅ | COMPLETE |
-| Environment Setup | ✅ | COMPLETE - Tested in TTY4 |
-| Minimal Test | ✅ | COMPLETE - Working |
-| DRM Structure | ✅ | COMPLETE |
-| Trait Handlers | ✅ | COMPLETE - All 9 implemented |
-| Device Init | ✅ | COMPLETE - device_added() working |
-| Connector Scanning | ✅ | COMPLETE - device_changed() working |
-| Display Setup | ✅ | COMPLETE - connector_connected() working |
-| **Rendering** | ⏳ | PENDING - frame_finish() stub ready |
+| Task               | Status | Details                                  |
+| ------------------ | ------ | ---------------------------------------- |
+| Strategic Planning | ✅     | COMPLETE                                 |
+| Environment Setup  | ✅     | COMPLETE - Tested in TTY4                |
+| Minimal Test       | ✅     | COMPLETE - Working                       |
+| DRM Structure      | ✅     | COMPLETE                                 |
+| Trait Handlers     | ✅     | COMPLETE - All 9 implemented             |
+| Device Init        | ✅     | COMPLETE - device_added() working        |
+| Connector Scanning | ✅     | COMPLETE - device_changed() working      |
+| Display Setup      | ✅     | COMPLETE - connector_connected() working |
+| **Rendering**      | ⏳     | PENDING - frame_finish() stub ready      |
 
 **Progress:** 8/9 tasks complete = **95%**  
 **Remaining:** Just rendering implementation!  
