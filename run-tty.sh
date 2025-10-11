@@ -1,7 +1,13 @@
 #!/bin/bash
 # Simple script to run compositor from TTY
-# Usage: sudo ./run-tty.sh
+# Usage: ./run-tty.sh (builds as user, runs with sudo)
 
 cd ~/src/nuthatch-compositor
-export RUST_LOG=info
-~/.cargo/bin/cargo run --release
+
+# Build as regular user
+echo "Building compositor..."
+cargo build --release
+
+# Run with sudo
+echo "Running compositor with sudo..."
+sudo RUST_LOG=info ./target/release/nuthatch-compositor
