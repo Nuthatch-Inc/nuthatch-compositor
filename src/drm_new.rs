@@ -837,7 +837,7 @@ fn device_added(
         framebuffer_exporter,
         Some(gbm.clone()),
         SUPPORTED_FORMATS.iter().copied(),
-        render_formats.into_iter().collect(),
+        render_formats.into_iter().collect::<Vec<_>>(),
     );
     info!("✅ Created DRM output manager");
 
