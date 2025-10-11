@@ -25,6 +25,7 @@ use smithay::{
         drm::{
             compositor::DrmCompositor,
             CreateDrmNodeError, DrmDevice, DrmDeviceFd, DrmEvent, DrmNode, NodeType,
+            exporter::gbm::GbmFramebufferExporter,
         },
         egl::{EGLContext, EGLDevice, EGLDisplay},
         input::InputEvent,
@@ -34,7 +35,7 @@ use smithay::{
             multigpu::{gbm::GbmGlesBackend, GpuManager},
         },
         session::{
-            libseat::LibSeatSession,
+            libseat::{self, LibSeatSession},
             Event as SessionEvent, Session,
         },
         udev::{all_gpus, primary_gpu, UdevBackend, UdevEvent},
@@ -44,7 +45,7 @@ use smithay::{
     desktop::Space,
     input::{SeatHandler, SeatState},
     reexports::{
-        calloop::{EventLoop, LoopHandle},
+        calloop::{EventLoop, LoopHandle, RegistrationToken},
         input::{DeviceCapability, Libinput},
         rustix::fs::OFlags,
         wayland_server::{
@@ -94,9 +95,10 @@ const SUPPORTED_FORMATS: &[Fourcc] = &[
 
 /// Data for a single DRM device (GPU)
 struct BackendData {
-    _drm: DrmDevice,
+    drm: DrmDevice,
     gbm: GbmDevice<DrmDeviceFd>,
     render_node: DrmNode,
+    registration_token: RegistrationToken,
     surfaces: HashMap<u32, SurfaceData>, // crtc handle -> surface
 }
 
@@ -112,6 +114,7 @@ pub struct UdevData {
     primary_gpu: DrmNode,
     gpus: GpuManager<GbmGlesBackend<GlesRenderer, DrmDeviceFd>>,
     backends: HashMap<DrmNode, BackendData>,
+    loop_handle: LoopHandle<'static, DrmCompositorState>,
 }
 
 /// Combined state for the compositor with DRM backend
@@ -159,12 +162,14 @@ impl UdevData {
         session: LibSeatSession,
         primary_gpu: DrmNode,
         gpus: GpuManager<GbmGlesBackend<GlesRenderer, DrmDeviceFd>>,
+        loop_handle: LoopHandle<'static, DrmCompositorState>,
     ) -> Self {
         Self {
             session,
             primary_gpu,
             gpus,
             backends: HashMap::new(),
+            loop_handle,
         }
     }
 }
@@ -224,7 +229,8 @@ pub fn run_udev() -> Result<()> {
     info!("✅ GPU manager initialized");
     
     // Create backend data
-    let udev_data = UdevData::new(session.clone(), primary_gpu, gpus);
+    let loop_handle = event_loop.handle();
+    let udev_data = UdevData::new(session.clone(), primary_gpu, gpus, loop_handle.clone());
     
     // Initialize compositor state
     let mut state = DrmCompositorState::new(&display, &event_loop, udev_data);
@@ -333,39 +339,128 @@ pub fn run_udev() -> Result<()> {
     Ok(())
 }
 
+/// Handle device changes (connector hotplug, etc.)
+fn device_changed(state: &mut DrmCompositorState, node: DrmNode) {
+    info!("Device changed: {}", node);
+    // TODO: Scan connectors and create/update outputs
+    // This will call connector_connected() for each connected display
+}
+
 /// Device addition handler
 fn device_added(
     state: &mut DrmCompositorState,
     node: DrmNode,
     path: &Path,
 ) -> Result<(), DeviceAddError> {
-    info!("Adding device: {} at {:?}", node, path);
+    info!("Adding DRM device: {} at {:?}", node, path);
     
-    // TODO: Implement full device initialization based on Anvil's device_added
-    // Steps:
-    // 1. Open device file descriptor
-    // 2. Create DrmDevice
-    // 3. Create GbmDevice
-    // 4. Initialize EGL display and renderer
-    // 5. Add to GPU manager
-    // 6. Create allocator and framebuffer exporter
-    // 7. Scan for connectors and create outputs
-    
-    warn!("Device initialization not yet implemented");
-    
+    // 1. Open device file descriptor using session
+    let fd = state
+        .udev_data
+        .session
+        .open(
+            path,
+            OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY | OFlags::NONBLOCK,
+        )
+        .map_err(DeviceAddError::DeviceOpen)?;
+
+    let fd = DrmDeviceFd::new(DeviceFd::from(fd));
+    info!("✅ Opened device FD");
+
+    // 2. Create DRM device and event notifier
+    let (drm, notifier) = DrmDevice::new(fd.clone(), true)
+        .map_err(DeviceAddError::DrmDevice)?;
+    info!("✅ Created DRM device");
+
+    // 3. Create GBM device for buffer allocation
+    let gbm = GbmDevice::new(fd)
+        .map_err(DeviceAddError::GbmDevice)?;
+    info!("✅ Created GBM device");
+
+    // 4. Register DRM event handler for VBlank
+    let registration_token = state
+        .udev_data
+        .loop_handle
+        .insert_source(
+            notifier,
+            move |event, _metadata, data: &mut DrmCompositorState| match event {
+                DrmEvent::VBlank(crtc) => {
+                    debug!("VBlank event for CRTC {:?}", crtc);
+                    // TODO: Call frame_finish when implemented
+                    // frame_finish(data, node, crtc, metadata);
+                }
+                DrmEvent::Error(error) => {
+                    error!("DRM error: {:?}", error);
+                }
+            },
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to register DRM event source: {:?}", e))
+        .map_err(DeviceAddError::EventLoop)?;
+    info!("✅ Registered VBlank event handler");
+
+    // 5. Try to initialize EGL and add to GPU manager
+    let render_node = {
+        let display = unsafe { EGLDisplay::new(gbm.clone()) }
+            .map_err(|e| DeviceAddError::AddNode(anyhow::anyhow!("Failed to create EGL display: {}", e)))?;
+        
+        let egl_device = EGLDevice::device_for_display(&display)
+            .map_err(|e| DeviceAddError::AddNode(anyhow::anyhow!("Failed to get EGL device: {}", e)))?;
+
+        if egl_device.is_software() {
+            warn!("Device is using software rendering!");
+        }
+
+        let render_node = egl_device
+            .try_get_render_node()
+            .ok()
+            .flatten()
+            .unwrap_or(node);
+
+        state
+            .udev_data
+            .gpus
+            .as_mut()
+            .add_node(render_node, gbm.clone())
+            .map_err(|e| DeviceAddError::AddNode(anyhow::anyhow!("Failed to add GPU node: {}", e)))?;
+
+        render_node
+    };
+    info!("✅ Initialized EGL and added to GPU manager (render node: {})", render_node);
+
+    // 6. Store backend data
+    let backend_data = BackendData {
+        drm,
+        gbm,
+        render_node,
+        registration_token,
+        surfaces: HashMap::new(),
+    };
+
+    state.udev_data.backends.insert(node, backend_data);
+    info!("✅ Device {} fully initialized!", node);
+
+    // 7. Scan for connectors (will be done in device_changed)
+    device_changed(state, node);
+
     Ok(())
 }
 
 #[derive(Debug, thiserror::Error)]
 enum DeviceAddError {
     #[error("Failed to open device: {0}")]
-    DeviceOpen(#[source] std::io::Error),
+    DeviceOpen(#[source] libseat::Error),
     
     #[error("Failed to create DRM device: {0}")]
-    DrmDevice(#[source] std::io::Error),
+    DrmDevice(#[source] smithay::backend::drm::DrmError),
     
     #[error("Failed to create GBM device: {0}")]
     GbmDevice(#[source] std::io::Error),
+    
+    #[error("Failed to add node to GPU manager: {0}")]
+    AddNode(#[source] anyhow::Error),
+    
+    #[error("Failed to register event source: {0}")]
+    EventLoop(#[source] anyhow::Error),
     
     #[error("Failed to get DRM node: {0}")]
     DrmNode(#[source] CreateDrmNodeError),

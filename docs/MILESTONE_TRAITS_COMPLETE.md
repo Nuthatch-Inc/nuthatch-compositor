@@ -9,12 +9,14 @@
 ### ✅ Phase 1 Foundation - 80% COMPLETE
 
 **Completed Tasks:**
+
 1. Strategic planning and documentation ✅
 2. Environment validation (drm_minimal test) ✅
 3. DRM backend structure (drm_new.rs) ✅
 4. **ALL Smithay trait handlers implemented** ✅
 
 **Remaining:**
+
 - Device initialization (in progress)
 - Rendering pipeline
 - First pixel!
@@ -24,58 +26,71 @@
 All required Smithay protocol handlers are now implemented:
 
 ✅ **CompositorHandler**
+
 - Surface creation and lifecycle
 - Client compositor state tracking
 - Surface commits
 
 ✅ **XdgShellHandler**
+
 - Window management (toplevel surfaces)
 - Popup management
 - Popup repositioning (`reposition_request`)
 - Popup grabs
 
 ✅ **ShmHandler**
+
 - Shared memory buffer management
 
 ✅ **SeatHandler**
+
 - Input seat management
 - Keyboard, pointer, and touch focus
 - Focus change notifications
 - Cursor image updates
 
 ✅ **DataDeviceHandler**
+
 - Clipboard operations
 - Drag-and-drop support
 - Client and server DnD grabs
 
 ✅ **BufferHandler**
+
 - Buffer lifecycle management
 
 ✅ **SelectionHandler**
+
 - Selection (clipboard) handling
 
 ✅ **OutputHandler**
+
 - Display output management
 
 ✅ **Delegate Macros**
+
 - All protocol wiring complete
 
 ### Technical Challenges Solved
 
 1. **Trait Method Signatures**
+
    - Fixed `shm_state()` and `data_device_state()` to use `&self` not `&mut self`
    - Trait signatures are immutable for these state getters
 
 2. **SeatHandler Focus Types**
+
    - Changed from `smithay::wayland::seat::WaylandFocus` trait
    - To concrete `WlSurface` type
    - Traits can't be used as associated types without `dyn`
 
 3. **Missing reposition_request Method**
+
    - Added to XdgShellHandler implementation
    - Required for popup repositioning support
 
 4. **Context Method Trait Bounds**
+
    - `.context()` from anyhow doesn't work with `InsertError<T>`
    - Used `.map_err(|e| anyhow::anyhow!(...))` instead
    - Properly converts calloop errors to anyhow errors
@@ -88,14 +103,17 @@ All required Smithay protocol handlers are now implemented:
 ### Code Statistics
 
 **Files Modified:**
+
 - `src/drm_new.rs` - Added ~150 lines of trait implementations
 - `src/main.rs` - Added --drm-full flag support
 
 **Total Lines:**
+
 - drm_new.rs: ~550 lines (framework complete!)
 - Documentation: ~1000+ lines across multiple files
 
 **Compilation:**
+
 - Status: ✅ CLEAN BUILD
 - Warnings: Minor unused imports
 - Errors: 0 🎉
@@ -103,6 +121,7 @@ All required Smithay protocol handlers are now implemented:
 ### Testing Commands
 
 **Minimal Test (Already Working):**
+
 ```bash
 cd ~/src/nuthatch-compositor
 cargo build --release
@@ -111,6 +130,7 @@ sudo RUST_LOG=info ./target/release/nuthatch-compositor --drm
 ```
 
 **Full Backend (NEW - Now Compiles!):**
+
 ```bash
 # Switch to TTY4: Ctrl+Alt+F4
 sudo RUST_LOG=info ./target/release/nuthatch-compositor --drm --drm-full
@@ -171,6 +191,7 @@ Handle VBlank and rendering:
 **Extremely High!** 🚀
 
 **Why:**
+
 1. Framework is 100% complete and compiles
 2. All boilerplate trait work is done
 3. Clear path to rendering (copy Anvil's device init)
@@ -178,11 +199,13 @@ Handle VBlank and rendering:
 5. No more type system surprises
 
 **Risk Level:** Low
+
 - Following proven patterns from Anvil
 - Incremental testing at each step
 - Can fall back to minimal test if needed
 
 **Timeline Confidence:**
+
 - First pixel this weekend: 90%
 - Full Phase 1 complete: 95%
 - Cursor and input next week: 85%
@@ -190,18 +213,23 @@ Handle VBlank and rendering:
 ## Key Insights
 
 ### 1. Trait Implementation Was Tedious But Straightforward
+
 Once we understood the patterns (immutable state getters, concrete focus types), it was just careful copying and adapting from Anvil.
 
 ### 2. Compiler Errors Are Your Friend
+
 Every error led us to the correct solution. The Rust type system caught all our mistakes before runtime.
 
 ### 3. Incremental Compilation Saved Time
+
 Being able to `cargo check` quickly and fix errors one by one made the process manageable.
 
-### 4. Documentation from Working Code  
+### 4. Documentation from Working Code
+
 Anvil's examples were more valuable than API documentation. Seeing the patterns in use clarified everything.
 
 ### 5. Strategic Copying Is Smart
+
 We're not "cheating" by using Anvil's patterns - we're being pragmatic. The value of Nuthatch is in the UX features we'll add, not in reinventing Wayland protocols.
 
 ## Celebration Points 🎊
@@ -215,17 +243,20 @@ We're not "cheating" by using Anvil's patterns - we're being pragmatic. The valu
 ## Files Summary
 
 ### Ready to Use ✅
+
 - `src/drm_minimal.rs` - Environment validator (tested, working)
 - `src/drm_new.rs` - Full DRM backend (compiles, ready for device init)
 - `src/main.rs` - Routes to appropriate backend
 - All documentation files
 
 ### Next to Implement 🚧
+
 - `device_added()` in drm_new.rs
-- `connector_connected()` in drm_new.rs  
+- `connector_connected()` in drm_new.rs
 - `frame_finish()` in drm_new.rs
 
 ### Reference 📚
+
 - `~/src/smithay/anvil/src/udev.rs` - Lines 763-870 (device_added)
 - `~/src/smithay/anvil/src/udev.rs` - Lines 871-1000 (connector_connected)
 - `~/src/smithay/anvil/src/udev.rs` - Frame handling patterns
@@ -234,16 +265,16 @@ We're not "cheating" by using Anvil's patterns - we're being pragmatic. The valu
 
 **Overall Phase 1 Progress: 80%**
 
-| Task | Status | Completion |
-|------|--------|------------|
-| Strategic Planning | ✅ | 100% |
-| Environment Setup | ✅ | 100% |
-| Minimal Test | ✅ | 100% |
-| DRM Structure | ✅ | 100% |
-| Trait Handlers | ✅ | 100% |
-| Device Init | 🚧 | 0% |
-| Display Setup | ⏳ | 0% |
-| Rendering | ⏳ | 0% |
+| Task               | Status | Completion |
+| ------------------ | ------ | ---------- |
+| Strategic Planning | ✅     | 100%       |
+| Environment Setup  | ✅     | 100%       |
+| Minimal Test       | ✅     | 100%       |
+| DRM Structure      | ✅     | 100%       |
+| Trait Handlers     | ✅     | 100%       |
+| Device Init        | 🚧     | 0%         |
+| Display Setup      | ⏳     | 0%         |
+| Rendering          | ⏳     | 0%         |
 
 **Time Invested Today:** ~6 hours  
 **Lines of Code Written:** ~200 lines  
@@ -263,7 +294,7 @@ The trait implementations took longer than expected, but we're now in a much str
 **Status:** 🚀 EXCELLENT MOMENTUM  
 **Next Session:** Implement device initialization  
 **Blockers:** None - clear path forward  
-**Morale:** SKY HIGH! 🎉  
+**Morale:** SKY HIGH! 🎉
 
 **We're so close to seeing our first pixels!** 🎨✨
 
