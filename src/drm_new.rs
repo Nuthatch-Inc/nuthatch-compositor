@@ -218,20 +218,26 @@ impl UdevData {
 
 /// Initialize and run the DRM backend
 pub fn run_udev() -> Result<()> {
-    info!("🚀 Initializing full DRM backend");
+    info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    info!("🚀 STARTING FULL DRM BACKEND");
+    info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     
     // Create event loop for async operations
+    info!("Step 1: Creating event loop...");
     let mut event_loop: EventLoop<DrmCompositorState> = EventLoop::try_new()
         .context("Failed to create event loop")?;
     let loop_handle = event_loop.handle();
+    info!("✅ Event loop created");
     
     // Create Wayland display
+    info!("Step 2: Creating Wayland display...");
     let display = Display::new()
         .context("Failed to create Wayland display")?;
     let display_handle = display.handle();
+    info!("✅ Wayland display created");
     
     // Initialize session for VT switching and device access
-    info!("Initializing session...");
+    info!("Step 3: Initializing session...");
     let (session, notifier) = LibSeatSession::new()
         .context("Failed to create LibSeat session")?;
     let seat_name = session.seat();
@@ -382,50 +388,84 @@ pub fn run_udev() -> Result<()> {
     // Initialize existing devices
     info!("Initializing {} existing DRM devices...", existing_devices.len());
     for (device_id, path) in existing_devices {
-        info!("Initializing device: {} at {:?}", device_id, path);
+        info!("🔍 Processing device: {} at {:?}", device_id, path);
         if let Ok(node) = DrmNode::from_dev_id(device_id) {
+            info!("✅ Converted device_id {} to DrmNode: {}", device_id, node);
             if let Err(e) = device_added(&mut state, node, &path) {
-                error!("Failed to initialize device {}: {}", device_id, e);
+                error!("❌ Failed to initialize device {}: {}", device_id, e);
+            } else {
+                info!("✅ Successfully initialized device {}", device_id);
             }
         } else {
-            error!("Invalid device id: {}", device_id);
+            error!("❌ Invalid device id: {}", device_id);
         }
     }
     
     info!("🎉 DRM backend initialized successfully!");
+    info!("📊 Event loop status: Starting...");
     info!("Compositor is running. Press Ctrl+C to exit.");
+    info!("⚠️  SAFETY: Will auto-exit after 10 seconds for testing");
     
     // Main event loop - run indefinitely
-    info!("Starting main event loop...");
+    info!("🔄 Entering main event loop...");
+    let start_time = std::time::Instant::now();
+    let mut iteration = 0u64;
     loop {
-        event_loop.dispatch(Some(Duration::from_millis(16)), &mut state)
-            .context("Event loop error")?;
+        // SAFETY: Auto-exit after 10 seconds to prevent hangs during testing
+        if start_time.elapsed() > Duration::from_secs(10) {
+            info!("⏱️  10 second timeout reached - exiting for safety");
+            break;
+        }
+        
+        iteration += 1;
+        if iteration % 60 == 0 {  // Log every ~1 second at 60fps
+            info!("Event loop iteration: {} ({}s elapsed)", iteration, start_time.elapsed().as_secs());
+        }
+        
+        match event_loop.dispatch(Some(Duration::from_millis(16)), &mut state) {
+            Ok(_) => {},
+            Err(e) => {
+                error!("❌ Event loop error: {:?}", e);
+                return Err(e).context("Event loop error");
+            }
+        }
     }
     
+    info!("🛑 Exiting compositor safely...");
     Ok(())
 }
 
 /// Handle device changes (connector hotplug, etc.)
 fn device_changed(state: &mut DrmCompositorState, node: DrmNode) {
-    info!("Device changed: {}, scanning connectors...", node);
+    info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    info!("🔌 DEVICE_CHANGED called for {}", node);
+    info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     
     // Get the backend device
     let device = if let Some(device) = state.udev_data.backends.get_mut(&node) {
+        info!("✅ Found device in backends");
         device
     } else {
-        warn!("Device {} not found in backends", node);
+        warn!("❌ Device {} not found in backends", node);
         return;
     };
 
     // Scan for connector changes
+    info!("Scanning connectors...");
     let scan_result = match device.drm_scanner.scan_connectors(device.drm_output_manager.device()) {
-        Ok(scan_result) => scan_result,
+        Ok(scan_result) => {
+            info!("✅ Connector scan successful");
+            scan_result
+        }
         Err(err) => {
-            warn!("Failed to scan connectors: {:?}", err);
+            warn!("❌ Failed to scan connectors: {:?}", err);
             return;
         }
     };
 
+    info!("Processing connector events...");
+    info!("   Connected: {}, Disconnected: {}", scan_result.connected.len(), scan_result.disconnected.len());
+    
     // Process each connector event
     for event in scan_result {
         match event {
@@ -467,12 +507,15 @@ fn connector_connected(
     connector: connector::Info,
     crtc: crtc::Handle,
 ) {
+    info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    info!("🔗 CONNECTOR_CONNECTED called");
     info!(
-        "Setting up connector: {}-{} on CRTC {:?}",
+        "   Connector: {}-{} on CRTC {:?}",
         connector.interface().as_str(),
         connector.interface_id(),
         crtc
     );
+    info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     
     // Get the backend device
     let device = if let Some(device) = state.udev_data.backends.get_mut(&node) {
@@ -484,6 +527,7 @@ fn connector_connected(
 
     // Create output name
     let output_name = format!("{}-{}", connector.interface().as_str(), connector.interface_id());
+    info!("Output name: {}", output_name);
     
     // Select display mode (prefer the first preferred mode, or use first available)
     let mode_id = connector
@@ -496,7 +540,7 @@ fn connector_connected(
     let wl_mode = WlMode::from(drm_mode);
     
     info!(
-        "Selected mode for {}: {}x{}@{:.2}Hz",
+        "✅ Selected mode for {}: {}x{}@{:.2}Hz",
         output_name,
         wl_mode.size.w,
         wl_mode.size.h,
@@ -505,8 +549,10 @@ fn connector_connected(
     
     // Get physical size
     let (phys_w, phys_h) = connector.size().unwrap_or((0, 0));
+    info!("Physical size: {}x{} mm", phys_w, phys_h);
     
     // Create Wayland Output
+    info!("Creating Wayland Output...");
     let output = Output::new(
         output_name.clone(),
         PhysicalProperties {
@@ -516,9 +562,12 @@ fn connector_connected(
             model: "Unknown".into(),
         },
     );
+    info!("✅ Created Wayland Output");
     
     // Create global for clients
+    info!("Creating global for clients...");
     let _global = output.create_global::<DrmCompositorState>(&state.display_handle);
+    info!("✅ Created global");
     
     // Calculate position (place outputs side by side)
     let x = state
@@ -526,18 +575,22 @@ fn connector_connected(
         .outputs()
         .fold(0, |acc, o| acc + state.space.output_geometry(o).unwrap().size.w);
     let position = (x, 0).into();
+    info!("Output position: {:?}", position);
     
     // Configure output
+    info!("Configuring output state...");
     output.set_preferred(wl_mode);
     output.change_current_state(Some(wl_mode), None, None, Some(position));
     state.space.map_output(&output, position);
+    info!("✅ Output configured and mapped to space");
     
     info!(
         "✅ Output {} created at position {:?} with mode {}x{}",
         output_name, position, wl_mode.size.w, wl_mode.size.h
     );
     
-    info!("✅ DRM output manager will be initialized during first render");
+    info!("Preparing surface data...");
+    info!("   DRM output will be initialized during first render");
     
     // Store surface data (DRM output will be created during rendering)
     let surface = SurfaceData {
@@ -548,12 +601,13 @@ fn connector_connected(
         mode: drm_mode,
     };
     
+    info!("Storing surface data for CRTC {:?}...", crtc);
     device.surfaces.insert(crtc.into(), surface);
+    info!("✅ Surface stored (total surfaces: {})", device.surfaces.len());
     
-    info!("✅ Connector {} fully configured!", output_name);
-    
-    // TODO: Create DrmCompositor when implementing rendering
-    // TODO: Kick off rendering with render_surface()
+    info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    info!("✅ CONNECTOR_CONNECTED COMPLETE: {}", output_name);
+    info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 }
 
 /// Handle connector disconnection
@@ -579,22 +633,31 @@ fn render_surface(
     node: DrmNode,
     crtc: crtc::Handle,
 ) {
-    trace!("Rendering frame for device {} CRTC {:?}", node, crtc);
+    info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    info!("🎬 RENDER_SURFACE called");
+    info!("   Node: {}, CRTC: {:?}", node, crtc);
+    info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     
     // Get backend
     let device = match state.udev_data.backends.get_mut(&node) {
-        Some(d) => d,
+        Some(d) => {
+            info!("✅ Found device in backends");
+            d
+        }
         None => {
-            error!("Device {} not found during rendering", node);
+            error!("❌ Device {} not found during rendering", node);
             return;
         }
     };
     
     // Get surface
     let surface = match device.surfaces.get_mut(&(crtc.into())) {
-        Some(s) => s,
+        Some(s) => {
+            info!("✅ Found surface for CRTC {:?}", crtc);
+            s
+        }
         None => {
-            error!("Surface not found for CRTC {:?}", crtc);
+            error!("❌ Surface not found for CRTC {:?}", crtc);
             return;
         }
     };
@@ -665,9 +728,14 @@ fn device_added(
     node: DrmNode,
     path: &Path,
 ) -> Result<(), DeviceAddError> {
-    info!("Adding DRM device: {} at {:?}", node, path);
+    info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    info!("📍 DEVICE_ADDED called");
+    info!("   Node: {}", node);
+    info!("   Path: {:?}", path);
+    info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     
     // 1. Open device file descriptor using session
+    info!("Step 1: Opening device FD...");
     let fd = state
         .udev_data
         .session
@@ -678,19 +746,22 @@ fn device_added(
         .map_err(DeviceAddError::DeviceOpen)?;
 
     let fd = DrmDeviceFd::new(DeviceFd::from(fd));
-    info!("✅ Opened device FD");
+    info!("✅ Step 1 complete: Opened device FD");
 
     // 2. Create DRM device and event notifier
+    info!("Step 2: Creating DRM device...");
     let (drm, notifier) = DrmDevice::new(fd.clone(), true)
         .map_err(DeviceAddError::DrmDevice)?;
-    info!("✅ Created DRM device");
+    info!("✅ Step 2 complete: Created DRM device");
 
     // 3. Create GBM device for buffer allocation
+    info!("Step 3: Creating GBM device...");
     let gbm = GbmDevice::new(fd)
         .map_err(DeviceAddError::GbmDevice)?;
-    info!("✅ Created GBM device");
+    info!("✅ Step 3 complete: Created GBM device");
 
     // 4. Register DRM event handler for VBlank
+    info!("Step 4: Registering VBlank event handler...");
     let registration_token = state
         .udev_data
         .loop_handle
@@ -698,7 +769,7 @@ fn device_added(
             notifier,
             move |event, _metadata, data: &mut DrmCompositorState| match event {
                 DrmEvent::VBlank(crtc) => {
-                    debug!("VBlank event for CRTC {:?}", crtc);
+                    debug!("🎬 VBlank event for CRTC {:?}", crtc);
                     render_surface(data, node, crtc);
                 }
                 DrmEvent::Error(error) => {
@@ -708,9 +779,10 @@ fn device_added(
         )
         .map_err(|e| anyhow::anyhow!("Failed to register DRM event source: {:?}", e))
         .map_err(DeviceAddError::EventLoop)?;
-    info!("✅ Registered VBlank event handler");
+    info!("✅ Step 4 complete: Registered VBlank event handler");
 
     // 5. Try to initialize EGL and add to GPU manager
+    info!("Step 5: Initializing EGL and GPU manager...");
     let render_node = {
         let display = unsafe { EGLDisplay::new(gbm.clone()) }
             .map_err(|e| DeviceAddError::AddNode(anyhow::anyhow!("Failed to create EGL display: {}", e)))?;
@@ -769,11 +841,16 @@ fn device_added(
     };
 
     state.udev_data.backends.insert(node, backend_data);
-    info!("✅ Device {} fully initialized!", node);
+    info!("✅ Step 8 complete: Device {} stored in backends", node);
 
     // 9. Scan for connectors (will be done in device_changed)
+    info!("Step 9: Scanning for connectors via device_changed()...");
     device_changed(state, node);
 
+    info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    info!("✅ DEVICE_ADDED COMPLETE for {}", node);
+    info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    
     Ok(())
 }
 
