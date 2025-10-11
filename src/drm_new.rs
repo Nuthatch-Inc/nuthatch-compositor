@@ -29,11 +29,16 @@ use smithay::{
             exporter::gbm::GbmFramebufferExporter,
             output::{DrmOutput, DrmOutputManager, DrmOutputRenderElements},
         },
+        renderer::element::{
+            RenderElement,
+            memory::MemoryRenderBufferRenderElement,
+        },
         egl::{EGLContext, EGLDevice, EGLDisplay},
         input::InputEvent,
         libinput::{LibinputInputBackend, LibinputSessionInterface},
         renderer::{
             gles::GlesRenderer,
+            ImportMem,
             multigpu::{gbm::GbmGlesBackend, GpuManager},
         },
         session::{
@@ -74,6 +79,23 @@ use smithay::{
 };
 use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
 use tracing::{debug, error, info, trace, warn};
+
+// Simple render element type for our compositor
+// For now we only support memory buffer rendering (for simple shapes/colors)
+smithay::backend::renderer::element::render_elements! {
+    pub NuthatchRenderElements<R> where R: ImportMem;
+    Memory=MemoryRenderBufferRenderElement<R>,
+}
+
+// Implement Debug for NuthatchRenderElements
+impl<R: smithay::backend::renderer::Renderer> std::fmt::Debug for NuthatchRenderElements<R> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Memory(arg0) => f.debug_tuple("Memory").field(arg0).finish(),
+            Self::_GenericCatcher(arg0) => f.debug_tuple("_GenericCatcher").field(arg0).finish(),
+        }
+    }
+}
 
 // Simplified state for DRM backend (without the full NuthatchState complexity)
 pub struct DrmCompositorState {
@@ -116,7 +138,15 @@ struct BackendData {
 /// Data for a single display output
 struct SurfaceData {
     output: Output,
-    // TODO: DRM output will be initialized during first render
+    drm_output: Option<DrmOutput<
+        GbmAllocator<DrmDeviceFd>,
+        GbmFramebufferExporter<DrmDeviceFd>,
+        (),  // Simplified - no presentation feedback
+        DrmDeviceFd,
+    >>,
+    render_node: DrmNode,
+    connector: connector::Handle,
+    mode: drm::control::Mode,
 }
 
 /// Main DRM backend state
@@ -486,9 +516,12 @@ fn connector_connected(
     info!("✅ DRM output manager will be initialized during first render");
     
     // Store surface data (DRM output will be created during rendering)
-    // For now, we'll just store the output - rendering will be implemented next
     let surface = SurfaceData {
         output: output.clone(),
+        drm_output: None,  // Will be initialized on first frame
+        render_node: device.render_node,
+        connector: connector.handle(),
+        mode: drm_mode,
     };
     
     device.surfaces.insert(crtc.into(), surface);
@@ -514,6 +547,92 @@ fn connector_disconnected(
     );
     
     // TODO: Clean up surface, remove output
+}
+
+/// Render a frame for a specific surface
+fn render_surface(
+    state: &mut DrmCompositorState,
+    node: DrmNode,
+    crtc: crtc::Handle,
+) {
+    trace!("Rendering frame for device {} CRTC {:?}", node, crtc);
+    
+    // Get backend
+    let device = match state.udev_data.backends.get_mut(&node) {
+        Some(d) => d,
+        None => {
+            error!("Device {} not found during rendering", node);
+            return;
+        }
+    };
+    
+    // Get surface
+    let surface = match device.surfaces.get_mut(&(crtc.into())) {
+        Some(s) => s,
+        None => {
+            error!("Surface not found for CRTC {:?}", crtc);
+            return;
+        }
+    };
+    
+    // Initialize DRM output if not yet created
+    if surface.drm_output.is_none() {
+        info!("🎨 Initializing DRM output for first render!");
+        
+        // Get renderer
+        let mut renderer = state.udev_data.gpus.single_renderer(&surface.render_node).unwrap();
+        
+        // Create empty render elements for initialization
+        use smithay::backend::renderer::multigpu::MultiRenderer;
+        type NuthatchMultiRenderer<'a, 'b> = MultiRenderer<
+            'a,
+            'b,
+            GbmGlesBackend<GlesRenderer, DrmDeviceFd>,
+            GbmGlesBackend<GlesRenderer, DrmDeviceFd>,
+        >;
+        
+        let render_elements: DrmOutputRenderElements<NuthatchMultiRenderer, NuthatchRenderElements<NuthatchMultiRenderer>> = 
+            DrmOutputRenderElements::new();
+        
+        match device.drm_output_manager.initialize_output(
+            crtc,
+            surface.mode,
+            &[surface.connector],
+            &surface.output,
+            None,  // No plane restrictions for now
+            &mut renderer,
+            &render_elements,
+        ) {
+            Ok(drm_output) => {
+                info!("✅ DRM output initialized successfully!");
+                surface.drm_output = Some(drm_output);
+            }
+            Err(e) => {
+                error!("Failed to initialize DRM output: {}", e);
+                return;
+            }
+        }
+    }
+    
+    // Get the DRM output
+    let drm_output = surface.drm_output.as_mut().unwrap();
+    
+    // Get renderer
+    let mut renderer = state.udev_data.gpus.single_renderer(&surface.render_node).unwrap();
+    
+    // Render frame with solid blue color (THIS WILL SHOW FIRST PIXEL!)
+    let clear_color = [0.0, 0.0, 1.0, 1.0];  // RGBA - solid blue
+    let elements: Vec<NuthatchRenderElements<_>> = vec![];  // No elements yet, just clear color
+    
+    use smithay::backend::drm::compositor::FrameFlags;
+    match drm_output.render_frame(&mut renderer, &elements, clear_color, FrameFlags::empty()) {
+        Ok(render_result) => {
+            trace!("Frame rendered successfully: {:?}", render_result);
+        }
+        Err(e) => {
+            warn!("Frame rendering error: {}", e);
+        }
+    }
 }
 
 /// Device addition handler
@@ -556,8 +675,7 @@ fn device_added(
             move |event, _metadata, data: &mut DrmCompositorState| match event {
                 DrmEvent::VBlank(crtc) => {
                     debug!("VBlank event for CRTC {:?}", crtc);
-                    // TODO: Call frame_finish when implemented
-                    // frame_finish(data, node, crtc, metadata);
+                    render_surface(data, node, crtc);
                 }
                 DrmEvent::Error(error) => {
                     error!("DRM error: {:?}", error);
