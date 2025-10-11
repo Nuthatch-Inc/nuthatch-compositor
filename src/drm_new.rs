@@ -279,9 +279,17 @@ pub fn run_udev() -> Result<()> {
     
     // Initialize udev backend for device discovery
     info!("Initializing udev backend...");
-    let udev_backend = UdevBackend::new(&seat_name)
+    let mut udev_backend = UdevBackend::new(&seat_name)
         .context("Failed to initialize udev backend")?;
     info!("✅ Udev backend initialized");
+    
+    // Enumerate existing devices BEFORE inserting backend into event loop
+    // Collect into owned Vec to drop the borrow
+    info!("Enumerating existing DRM devices...");
+    let existing_devices: Vec<(u64, std::path::PathBuf)> = udev_backend
+        .device_list()
+        .map(|(id, path)| (id, path.to_path_buf()))
+        .collect();
     
     // Initialize libinput for input handling
     info!("Initializing libinput...");
@@ -343,40 +351,56 @@ pub fn run_udev() -> Result<()> {
     
     // Insert udev backend for device hotplug
     loop_handle
-        .insert_source(udev_backend, move |event, _, _state| {
+        .insert_source(udev_backend, move |event, _, state| {
             match event {
                 UdevEvent::Added { device_id, path } => {
                     info!("DRM device added: {} at {:?}", device_id, path);
-                    // TODO: Initialize new device
+                    if let Ok(node) = DrmNode::from_dev_id(device_id) {
+                        if let Err(e) = device_added(state, node, &path) {
+                            error!("Failed to add device {}: {}", device_id, e);
+                        }
+                    } else {
+                        error!("Invalid device id: {}", device_id);
+                    }
                 }
                 UdevEvent::Changed { device_id } => {
                     info!("DRM device changed: {}", device_id);
-                    // TODO: Handle connector changes
+                    if let Ok(node) = DrmNode::from_dev_id(device_id) {
+                        device_changed(state, node);
+                    } else {
+                        error!("Invalid device id: {}", device_id);
+                    }
                 }
                 UdevEvent::Removed { device_id } => {
                     info!("DRM device removed: {}", device_id);
-                    // TODO: Remove device
+                    // TODO: Remove device - implement device_removed()
                 }
             }
         })
         .map_err(|e| anyhow::anyhow!("Failed to insert udev backend: {}", e))?;
     
+    // Initialize existing devices
+    info!("Initializing {} existing DRM devices...", existing_devices.len());
+    for (device_id, path) in existing_devices {
+        info!("Initializing device: {} at {:?}", device_id, path);
+        if let Ok(node) = DrmNode::from_dev_id(device_id) {
+            if let Err(e) = device_added(&mut state, node, &path) {
+                error!("Failed to initialize device {}: {}", device_id, e);
+            }
+        } else {
+            error!("Invalid device id: {}", device_id);
+        }
+    }
+    
     info!("🎉 DRM backend initialized successfully!");
     info!("Compositor is running. Press Ctrl+C to exit.");
-    info!("");
-    info!("TODO: Implement device initialization and rendering");
-    info!("TODO: This will display a colored screen once rendering is implemented");
     
-    // Main event loop
-    // For now, just run for a few seconds to test initialization
-    info!("Running event loop (will exit after 5 seconds for testing)...");
-    let start = std::time::Instant::now();
-    while start.elapsed() < Duration::from_secs(5) {
+    // Main event loop - run indefinitely
+    info!("Starting main event loop...");
+    loop {
         event_loop.dispatch(Some(Duration::from_millis(16)), &mut state)
             .context("Event loop error")?;
     }
-    
-    info!("✅ Event loop test complete - shutting down cleanly");
     
     Ok(())
 }
