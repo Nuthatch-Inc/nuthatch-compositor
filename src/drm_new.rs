@@ -27,6 +27,7 @@ use smithay::{
             compositor::DrmCompositor,
             CreateDrmNodeError, DrmDevice, DrmDeviceFd, DrmEvent, DrmNode, NodeType,
             exporter::gbm::GbmFramebufferExporter,
+            output::DrmOutputManager,
         },
         egl::{EGLContext, EGLDevice, EGLDisplay},
         input::InputEvent,
@@ -99,7 +100,12 @@ const SUPPORTED_FORMATS: &[Fourcc] = &[
 
 /// Data for a single DRM device (GPU)
 struct BackendData {
-    drm: DrmDevice,
+    drm_output_manager: DrmOutputManager<
+        GbmAllocator<DrmDeviceFd>,
+        GbmFramebufferExporter<DrmDeviceFd>,
+        (),  // Simplified - no presentation feedback for now
+        DrmDeviceFd,
+    >,
     gbm: GbmDevice<DrmDeviceFd>,
     render_node: DrmNode,
     registration_token: RegistrationToken,
@@ -358,7 +364,7 @@ fn device_changed(state: &mut DrmCompositorState, node: DrmNode) {
     };
 
     // Scan for connector changes
-    let scan_result = match device.drm_scanner.scan_connectors(&device.drm) {
+    let scan_result = match device.drm_scanner.scan_connectors(device.drm_output_manager.device()) {
         Ok(scan_result) => scan_result,
         Err(err) => {
             warn!("Failed to scan connectors: {:?}", err);
@@ -588,9 +594,28 @@ fn device_added(
     };
     info!("✅ Initialized EGL and added to GPU manager (render node: {})", render_node);
 
-    // 6. Store backend data
-    let backend_data = BackendData {
+    // 6. Create allocator and framebuffer exporter
+    let allocator = GbmAllocator::new(
+        gbm.clone(),
+        GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT,
+    );
+    let framebuffer_exporter = GbmFramebufferExporter::new(gbm.clone(), render_node.into());
+    info!("✅ Created allocator and framebuffer exporter");
+
+    // 7. Create DRM output manager
+    let drm_output_manager = DrmOutputManager::new(
         drm,
+        allocator,
+        framebuffer_exporter,
+        Some(gbm.clone()),
+        SUPPORTED_FORMATS.iter().copied(),
+        vec![], // Empty render formats for now - will be populated by GPU manager
+    );
+    info!("✅ Created DRM output manager");
+
+    // 8. Store backend data
+    let backend_data = BackendData {
+        drm_output_manager,
         gbm,
         render_node,
         registration_token,
@@ -601,7 +626,7 @@ fn device_added(
     state.udev_data.backends.insert(node, backend_data);
     info!("✅ Device {} fully initialized!", node);
 
-    // 7. Scan for connectors (will be done in device_changed)
+    // 9. Scan for connectors (will be done in device_changed)
     device_changed(state, node);
 
     Ok(())

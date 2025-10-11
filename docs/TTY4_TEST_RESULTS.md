@@ -24,13 +24,14 @@
 ✅ **Connector Scanning** - device_changed() worked  
 ✅ **Output Creation** - connector_connected() worked  
 ✅ **Event Loop** - Running and responsive  
-✅ **Clean Shutdown** - Proper cleanup and release  
+✅ **Clean Shutdown** - Proper cleanup and release
 
 ### Why TTY Buffer Stayed Visible?
 
-**This is EXPECTED!** 
+**This is EXPECTED!**
 
 We haven't implemented rendering yet, so:
+
 - No framebuffer clearing
 - No page flips
 - GPU left in previous state
@@ -43,6 +44,7 @@ This is actually **perfect** - it proves we have control without corrupting anyt
 ### Implement Rendering (frame_finish)
 
 Once we add rendering:
+
 ```rust
 fn frame_finish(...) {
     // Allocate framebuffer
@@ -104,6 +106,7 @@ INFO ✅ Event loop test complete - shutting down cleanly
 **ALL INFRASTRUCTURE IS WORKING!** 🎉
 
 We are **ONE FUNCTION** away from seeing our first pixel:
+
 - `frame_finish()` implementation
 - ~100 lines of code
 - 2-3 hours of work
