@@ -824,13 +824,20 @@ fn device_added(
     info!("✅ Created allocator and framebuffer exporter");
 
     // 7. Create DRM output manager
+    // Get supported formats from the GPU renderer
+    let mut renderer = state.udev_data.gpus.single_renderer(&render_node)
+        .map_err(|e| DeviceAddError::AddNode(anyhow::anyhow!("Failed to get renderer: {}", e)))?;
+    let render_formats = renderer.as_mut().egl_context().dmabuf_render_formats().clone();
+    
+    info!("Got render formats from GPU renderer");
+    
     let drm_output_manager = DrmOutputManager::new(
         drm,
         allocator,
         framebuffer_exporter,
         Some(gbm.clone()),
         SUPPORTED_FORMATS.iter().copied(),
-        vec![], // Empty render formats for now - will be populated by GPU manager
+        render_formats.into_iter().collect(),
     );
     info!("✅ Created DRM output manager");
 
