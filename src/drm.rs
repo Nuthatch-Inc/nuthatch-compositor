@@ -1,37 +1,42 @@
 use smithay::{
     backend::{
         allocator::gbm::GbmDevice,
-        drm::{DrmDevice, DrmDeviceFd, DrmNode},
+        drm::{DrmDevice, DrmDeviceFd, DrmEvent, DrmNode, NodeType},
         egl::{EGLContext, EGLDisplay},
-        renderer::gles::GlesRenderer,
+        renderer::{gles::GlesRenderer, Bind, Frame, Renderer},
         session::{libseat::LibSeatSession, Session},
-        udev::UdevBackend,
+        udev::{all_gpus, primary_gpu, UdevBackend, UdevEvent},
     },
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
         calloop::EventLoop,
-        drm::control::{connector, Device, ModeTypeFlags},
+        drm::control::{connector, crtc, Device, ModeTypeFlags},
         rustix::fs::OFlags,
         wayland_server::Display,
     },
-    utils::Transform,
+    utils::{DeviceFd, Transform},
 };
-
-use smithay::backend::session::libseat::backend::DeviceFd;
 
 use crate::state::NuthatchState;
 
 use std::{
+    collections::HashMap,
     path::Path,
     time::Duration,
 };
+
+struct DrmBackendData {
+    _drm: DrmDevice,
+    gbm: GbmDevice<DrmDeviceFd>,
+    _render_node: DrmNode,
+}
 
 pub fn init_drm() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("🚀 Initializing DRM/KMS backend");
     
     // Create event loop
     let mut event_loop: EventLoop<NuthatchState> = EventLoop::try_new()?;
-    let _loop_handle = event_loop.handle();
+    let loop_handle = event_loop.handle();
     
     // Create Wayland display
     let mut display: Display<NuthatchState> = Display::new()?;
@@ -41,38 +46,76 @@ pub fn init_drm() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize session for VT switching and device access
     tracing::info!("Starting libseat session...");
-    let (session, _notifier) = LibSeatSession::new()?;
+    let (session, notifier) = LibSeatSession::new()?;
+    
+    // Insert session notifier into event loop
+    loop_handle.insert_source(notifier, |_, _, _| {})?;
+    
+    let seat_name = session.seat();
+    tracing::info!("Session started on seat: {}", seat_name);
+    
+    // Find primary GPU  
+    let primary_gpu = primary_gpu(&seat_name)?
+        .and_then(|path| DrmNode::from_path(path).ok())
+        .or_else(|| {
+            all_gpus(&seat_name)
+                .ok()?
+                .into_iter()
+                .find_map(|path| DrmNode::from_path(path).ok())
+        })
+        .ok_or("No GPU found!")?;
+    
+    tracing::info!("Using {:?} as primary GPU", primary_gpu);
     
     // Initialize udev backend to handle GPU device discovery
     tracing::info!("Setting up udev backend...");
-    let udev_backend = UdevBackend::new(session.seat())?;
+    let udev_backend = UdevBackend::new(&seat_name)?;
     
-    // Find and use the first available GPU
-    let mut gpu_found = false;
-    for (dev_id, path) in udev_backend.device_list() {
-        tracing::info!("Found GPU device: {:?} at {:?}", dev_id, path);
+    // Store backend data
+    let mut backends: HashMap<DrmNode, DrmBackendData> = HashMap::new();
+    
+    // Process initial devices
+    for (device_id, path) in udev_backend.device_list() {
+        tracing::info!("Found device: {:?} at {:?}", device_id, path);
         
-        // Try to open this device
-        match try_initialize_gpu(&session, path, &mut display, &mut state) {
-            Ok(()) => {
-                tracing::info!("✅ Successfully initialized GPU: {:?}", path);
-                gpu_found = true;
-                break;
-            }
-            Err(e) => {
-                tracing::warn!("Failed to initialize GPU {:?}: {}", path, e);
+        if let Ok(node) = DrmNode::from_dev_id(device_id) {
+            match device_added(&mut session.clone(), node, &path, &mut display, &mut state, &loop_handle) {
+                Ok(backend_data) => {
+                    backends.insert(node, backend_data);
+                    tracing::info!("✅ Successfully initialized device: {:?}", node);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to initialize device {:?}: {}", node, e);
+                }
             }
         }
     }
     
-    if !gpu_found {
-        return Err("No usable GPU found!".into());
+    if backends.is_empty() {
+        return Err("No usable GPU devices found!".into());
     }
+    
+    // Set up udev event handler
+    loop_handle.insert_source(udev_backend, move |event, _, _state| {
+        match event {
+            UdevEvent::Added { device_id, path } => {
+                tracing::info!("Device added: {:?}", device_id);
+                // TODO: Handle hotplug
+            }
+            UdevEvent::Changed { device_id } => {
+                tracing::debug!("Device changed: {:?}", device_id);
+            }
+            UdevEvent::Removed { device_id } => {
+                tracing::info!("Device removed: {:?}", device_id);
+                // TODO: Handle removal
+            }
+        }
+    })?;
 
     tracing::info!("🎨 Compositor ready - clients can connect");
+    tracing::info!("Wayland socket: wayland-1 (should be auto-created)");
     
     // Main event loop
-    let mut frame_count = 0u64;
     loop {
         // Dispatch Wayland events
         display.dispatch_clients(&mut state)?;
@@ -82,38 +125,61 @@ pub fn init_drm() -> Result<(), Box<dyn std::error::Error>> {
         
         // Flush clients
         display.flush_clients()?;
-        
-        frame_count = frame_count.wrapping_add(1);
     }
 }
 
-fn try_initialize_gpu(
-    session: &LibSeatSession,
+fn device_added(
+    session: &mut LibSeatSession,
+    node: DrmNode,
     path: &Path,
     display: &mut Display<NuthatchState>,
     state: &mut NuthatchState,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // Open DRM device
+    loop_handle: &calloop::LoopHandle<NuthatchState>,
+) -> Result<DrmBackendData, Box<dyn std::error::Error>> {
     tracing::info!("Opening DRM device: {:?}", path);
     
     // Open the device with proper flags
-    let device_fd = session.open(
+    let fd = session.open(
         path,
         OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY | OFlags::NONBLOCK,
     )?;
     
-    // Wrap in DeviceFd then DrmDeviceFd
-    let device_fd = DeviceFd::new(device_fd, session.clone());
+    // Wrap in DeviceFd and DrmDeviceFd
+    let device_fd = DeviceFd::from(fd);
     let drm_fd = DrmDeviceFd::new(device_fd);
     
     // Create DRM device
-    let (drm, _notifier) = DrmDevice::new(drm_fd, true)?;
+    let (drm, drm_notifier) = DrmDevice::new(drm_fd.clone(), true)?;
+    
+    // Set up DRM event handler
+    loop_handle.insert_source(drm_notifier, move |event, _metadata, _state| {
+        match event {
+            DrmEvent::VBlank(crtc) => {
+                tracing::trace!("VBlank on crtc {:?}", crtc);
+            }
+            DrmEvent::Error(error) => {
+                tracing::error!("DRM error: {:?}", error);
+            }
+        }
+    })?;
     
     tracing::info!("DRM device created");
     
+    // Create GBM device for buffer allocation
+    let gbm = GbmDevice::new(drm_fd)?;
+    
+    // Initialize EGL for OpenGL rendering
+    tracing::info!("Initializing EGL...");
+    let egl_display = unsafe { EGLDisplay::new(gbm.clone())? };
+    let egl_context = EGLContext::new(&egl_display)?;
+    
+    tracing::info!("Creating renderer...");
+    let mut renderer = unsafe { GlesRenderer::new(egl_context)? };
+    
+    tracing::info!("✅ Renderer initialized");
+    
     // Get resource handles to find connectors
-    let res_handles = drm.resource_handles()
-        .map_err(|e| format!("Failed to get resource handles: {}", e))?;
+    let res_handles = drm.resource_handles()?;
     
     tracing::info!("Found {} connectors", res_handles.connectors().len());
     
@@ -129,7 +195,7 @@ fn try_initialize_gpu(
         }
     }
     
-    let (connector_handle, connector_info) = connector_info
+    let (_connector_handle, connector_info) = connector_info
         .ok_or("No connected display found")?;
     
     // Get preferred mode (usually highest resolution)
@@ -148,25 +214,6 @@ fn try_initialize_gpu(
         mode.vrefresh()
     );
     
-    // Find a CRTC for this connector
-    let crtcs = res_handles.crtcs();
-    let crtc = crtcs.first().ok_or("No CRTCs available")?.clone();
-    
-    tracing::info!("Using CRTC: {:?}", crtc);
-    
-    // Initialize GBM (Graphics Buffer Manager) for buffer allocation
-    let gbm = GbmDevice::new(drm.device_fd().clone())?;
-    
-    // Initialize EGL for OpenGL rendering
-    tracing::info!("Initializing EGL...");
-    let egl_display = EGLDisplay::new(gbm.clone())?;
-    let egl_context = EGLContext::new(&egl_display)?;
-    
-    tracing::info!("Creating renderer...");
-    let renderer = unsafe { GlesRenderer::new(egl_context)? };
-    
-    tracing::info!("✅ Renderer initialized");
-    
     // Create Wayland output
     let size = mode.size();
     let output_mode = Mode {
@@ -178,10 +225,15 @@ fn try_initialize_gpu(
         size: (0, 0).into(),
         subpixel: Subpixel::Unknown,
         make: "Nuthatch".into(),
-        model: "DRM".into(),
+        model: format!("{:?}", connector_info.interface()),
     };
     
-    let output = Output::new("DRM-1".to_string(), physical_properties);
+    let output_name = format!("{}-{}", 
+        connector_info.interface().as_str(),
+        connector_info.interface_id()
+    );
+    
+    let output = Output::new(output_name.clone(), physical_properties);
     let _global = output.create_global::<NuthatchState>(&display.handle());
     
     output.change_current_state(
@@ -194,7 +246,14 @@ fn try_initialize_gpu(
     
     state.space.map_output(&output, (0, 0));
     
-    tracing::info!("✅ Output created and mapped");
+    tracing::info!("✅ Output '{}' created and mapped", output_name);
     
-    Ok(())
+    // TODO: Set up actual rendering pipeline with DrmCompositor
+    tracing::info!("Note: Rendering pipeline not yet implemented");
+    
+    Ok(DrmBackendData {
+        _drm: drm,
+        gbm,
+        _render_node: node,
+    })
 }

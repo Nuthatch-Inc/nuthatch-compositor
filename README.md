@@ -53,16 +53,22 @@ This creates a nested Wayland session. You can test by running applications with
 WAYLAND_DISPLAY=wayland-1 kitty
 ```
 
-### TTY Mode (Full Screen)
+### TTY Mode (Full Screen) ⚠️ **VM ONLY - BROKEN**
 
-Switch to a TTY (Ctrl+Alt+F3), login, and run:
+**WARNING**: The DRM backend currently has critical issues causing black screen and unresponsive TTY switching. See `docs/DRM_ISSUES.md` for details.
+
+**Only test in a VM** until the rendering pipeline is implemented:
 
 ```bash
+# In VM TTY
 cd ~/src/nuthatch-compositor
-cargo run --release
+cargo run --release -- --drm
 ```
 
-Press Ctrl+Alt+F2 to return to your KDE session.
+Known issues:
+- Black screen (no rendering pipeline)
+- TTY switching broken (Ctrl+Alt+Fn unresponsive)
+- May require VM force reset to recover
 
 ## Architecture
 
