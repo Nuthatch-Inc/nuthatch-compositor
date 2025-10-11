@@ -4,7 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+calloop = "0.14.3"
 slog = "2.8.1"
 slog-async = "2.8.0"
 slog-term = "2.9.2"
 smithay = "0.7.0"
+smithay-drm-extras = "0.1.0"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+winit = "0.30.12"
+xkbcommon = "0.9.0"

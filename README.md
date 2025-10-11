@@ -15,6 +15,7 @@ A custom Wayland compositor built with Smithay for the Nuthatch Desktop Linux po
 **Phase 1: Foundation** - In Progress
 
 Current tasks:
+
 - [x] Project setup with Smithay
 - [ ] Basic window rendering
 - [ ] Window focus and stacking
