@@ -39,23 +39,34 @@ use smithay::{
         },
         udev::{all_gpus, primary_gpu, UdevBackend, UdevEvent},
     },
+    delegate_compositor, delegate_data_device, delegate_output, delegate_seat, delegate_shm,
+    delegate_xdg_shell,
+    desktop::Space,
+    input::{SeatHandler, SeatState},
     reexports::{
         calloop::{EventLoop, LoopHandle},
         input::{DeviceCapability, Libinput},
         rustix::fs::OFlags,
-        wayland_server::{Display, DisplayHandle},
+        wayland_server::{
+            backend::{ClientData, ClientId, DisconnectReason},
+            protocol::{wl_seat::WlSeat, wl_surface::WlSurface},
+            Display, DisplayHandle,
+        },
     },
-    utils::DeviceFd,
+    utils::{Clock, DeviceFd, Monotonic},
     wayland::{
-        compositor::CompositorState,
-        output::OutputManagerState,
-        selection::data_device::DataDeviceState,
-        shell::xdg::XdgShellState,
-        shm::ShmState,
+        buffer::BufferHandler,
+        compositor::{CompositorClientState, CompositorHandler, CompositorState},
+        output::{OutputHandler, OutputManagerState},
+        selection::{
+            data_device::{
+                ClientDndGrabHandler, DataDeviceHandler, ServerDndGrabHandler, DataDeviceState,
+            },
+            SelectionHandler,
+        },
+        shell::xdg::{XdgShellHandler, XdgShellState, PopupSurface, PositionerState, ToplevelSurface},
+        shm::{ShmHandler, ShmState},
     },
-    input::SeatState,
-    desktop::Space,
-    utils::{Clock, Monotonic},
 };
 use tracing::{debug, error, info, trace, warn};
 
@@ -230,13 +241,13 @@ pub fn run_udev() -> Result<()> {
         session.clone().into(),
     );
     libinput_context.udev_assign_seat(&seat_name)
-        .context("Failed to assign seat to libinput")?;
+        .map_err(|_| anyhow::anyhow!("Failed to assign seat to libinput"))?;
     let libinput_backend = LibinputInputBackend::new(libinput_context.clone());
     info!("✅ Libinput initialized");
     
     // Insert input handler into event loop
     loop_handle
-        .insert_source(libinput_backend, move |event, _, state| {
+        .insert_source(libinput_backend, move |event, _, _state| {
             // TODO: Process input events properly
             match event {
                 InputEvent::DeviceAdded { device } => {
@@ -260,11 +271,11 @@ pub fn run_udev() -> Result<()> {
                 _ => {}
             }
         })
-        .context("Failed to insert libinput source")?;
+        .map_err(|e| anyhow::anyhow!("Failed to insert libinput source: {}", e))?;
     
     // Insert session notifier for VT switching
     loop_handle
-        .insert_source(notifier, move |event, _, state| {
+        .insert_source(notifier, move |event, _, _state| {
             match event {
                 SessionEvent::PauseSession => {
                     info!("Session paused - VT switched away");
@@ -280,11 +291,11 @@ pub fn run_udev() -> Result<()> {
                 }
             }
         })
-        .context("Failed to insert session notifier")?;
+        .map_err(|e| anyhow::anyhow!("Failed to insert session notifier: {}", e))?;
     
     // Insert udev backend for device hotplug
     loop_handle
-        .insert_source(udev_backend, move |event, _, state| {
+        .insert_source(udev_backend, move |event, _, _state| {
             match event {
                 UdevEvent::Added { device_id, path } => {
                     info!("DRM device added: {} at {:?}", device_id, path);
@@ -300,7 +311,7 @@ pub fn run_udev() -> Result<()> {
                 }
             }
         })
-        .context("Failed to insert udev backend")?;
+        .map_err(|e| anyhow::anyhow!("Failed to insert udev backend: {}", e))?;
     
     info!("🎉 DRM backend initialized successfully!");
     info!("Compositor is running. Press Ctrl+C to exit.");
@@ -362,3 +373,133 @@ enum DeviceAddError {
     #[error("No render node available")]
     NoRenderNode,
 }
+
+// ============================================================================
+// Smithay Protocol Handler Implementations
+// Based on Anvil's handlers - these are required for Wayland protocol support
+// ============================================================================
+
+// Client state for tracking per-client data
+pub struct ClientState {
+    pub compositor_state: CompositorClientState,
+}
+
+impl ClientData for ClientState {
+    fn initialized(&self, _client_id: ClientId) {}
+    fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {}
+}
+
+// Compositor handler - handles surface creation and commits
+impl CompositorHandler for DrmCompositorState {
+    fn compositor_state(&mut self) -> &mut CompositorState {
+        &mut self.compositor_state
+    }
+
+    fn client_compositor_state<'a>(
+        &self,
+        client: &'a smithay::reexports::wayland_server::Client,
+    ) -> &'a CompositorClientState {
+        &client.get_data::<ClientState>().unwrap().compositor_state
+    }
+
+    fn commit(&mut self, surface: &WlSurface) {
+        trace!("Surface committed: {:?}", surface);
+        // TODO: Handle surface commits - update window state
+    }
+}
+
+// XDG Shell handler - handles window management
+impl XdgShellHandler for DrmCompositorState {
+    fn xdg_shell_state(&mut self) -> &mut XdgShellState {
+        &mut self.xdg_shell_state
+    }
+
+    fn new_toplevel(&mut self, _surface: ToplevelSurface) {
+        info!("New toplevel window created");
+        // TODO: Add window to space
+    }
+
+    fn toplevel_destroyed(&mut self, _surface: ToplevelSurface) {
+        info!("Toplevel window destroyed");
+        // TODO: Remove window from space
+    }
+
+    fn new_popup(&mut self, _surface: PopupSurface, _positioner: PositionerState) {
+        debug!("New popup created");
+        // TODO: Handle popup positioning
+    }
+
+    fn popup_destroyed(&mut self, _surface: PopupSurface) {
+        debug!("Popup destroyed");
+    }
+
+    fn reposition_request(&mut self, _surface: PopupSurface, _positioner: PositionerState, _token: u32) {
+        debug!("Popup reposition requested");
+        // TODO: Handle popup repositioning
+    }
+
+    fn grab(&mut self, _surface: PopupSurface, _seat: WlSeat, _serial: smithay::utils::Serial) {
+        debug!("Popup grab requested");
+        // TODO: Handle popup grabs
+    }
+}
+
+// SHM handler - handles shared memory buffers
+impl ShmHandler for DrmCompositorState {
+    fn shm_state(&self) -> &ShmState {
+        &self.shm_state
+    }
+}
+
+// Buffer handler - handles buffer management
+impl BufferHandler for DrmCompositorState {
+    fn buffer_destroyed(&mut self, _buffer: &smithay::reexports::wayland_server::protocol::wl_buffer::WlBuffer) {
+        trace!("Buffer destroyed");
+    }
+}
+
+// Seat handler - handles input seat management
+impl SeatHandler for DrmCompositorState {
+    type KeyboardFocus = WlSurface;
+    type PointerFocus = WlSurface;
+    type TouchFocus = WlSurface;
+
+    fn seat_state(&mut self) -> &mut SeatState<Self> {
+        &mut self.seat_state
+    }
+
+    fn focus_changed(&mut self, _seat: &smithay::input::Seat<Self>, _focused: Option<&Self::KeyboardFocus>) {
+        debug!("Keyboard focus changed");
+    }
+
+    fn cursor_image(&mut self, _seat: &smithay::input::Seat<Self>, _image: smithay::input::pointer::CursorImageStatus) {
+        trace!("Cursor image changed");
+        // TODO: Update cursor rendering
+    }
+}
+
+// Data device handler - handles clipboard and drag-and-drop
+impl DataDeviceHandler for DrmCompositorState {
+    fn data_device_state(&self) -> &DataDeviceState {
+        &self.data_device_state
+    }
+}
+
+impl ClientDndGrabHandler for DrmCompositorState {}
+impl ServerDndGrabHandler for DrmCompositorState {}
+
+// Selection handler - handles selection (clipboard)
+impl SelectionHandler for DrmCompositorState {
+    type SelectionUserData = ();
+}
+
+// Output handler - handles output (display) management
+impl OutputHandler for DrmCompositorState {}
+
+// Use Smithay's delegate macros to wire up the protocol handlers
+delegate_compositor!(DrmCompositorState);
+delegate_xdg_shell!(DrmCompositorState);
+delegate_shm!(DrmCompositorState);
+delegate_seat!(DrmCompositorState);
+delegate_data_device!(DrmCompositorState);
+delegate_output!(DrmCompositorState);
