@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0"
 calloop = "0.14.3"
+drm = "0.14.1"
 slog = "2.8.1"
 slog-async = "2.8.0"
 slog-term = "2.9.2"

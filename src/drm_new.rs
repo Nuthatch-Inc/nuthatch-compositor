@@ -16,6 +16,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use drm::control::{connector, crtc};
 use smithay::{
     backend::{
         allocator::{
@@ -69,6 +70,7 @@ use smithay::{
         shm::{ShmHandler, ShmState},
     },
 };
+use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
 use tracing::{debug, error, info, trace, warn};
 
 // Simplified state for DRM backend (without the full NuthatchState complexity)
@@ -99,6 +101,7 @@ struct BackendData {
     gbm: GbmDevice<DrmDeviceFd>,
     render_node: DrmNode,
     registration_token: RegistrationToken,
+    drm_scanner: DrmScanner,
     surfaces: HashMap<u32, SurfaceData>, // crtc handle -> surface
 }
 
@@ -341,9 +344,99 @@ pub fn run_udev() -> Result<()> {
 
 /// Handle device changes (connector hotplug, etc.)
 fn device_changed(state: &mut DrmCompositorState, node: DrmNode) {
-    info!("Device changed: {}", node);
-    // TODO: Scan connectors and create/update outputs
-    // This will call connector_connected() for each connected display
+    info!("Device changed: {}, scanning connectors...", node);
+    
+    // Get the backend device
+    let device = if let Some(device) = state.udev_data.backends.get_mut(&node) {
+        device
+    } else {
+        warn!("Device {} not found in backends", node);
+        return;
+    };
+
+    // Scan for connector changes
+    let scan_result = match device.drm_scanner.scan_connectors(&device.drm) {
+        Ok(scan_result) => scan_result,
+        Err(err) => {
+            warn!("Failed to scan connectors: {:?}", err);
+            return;
+        }
+    };
+
+    // Process each connector event
+    for event in scan_result {
+        match event {
+            DrmScanEvent::Connected {
+                connector,
+                crtc: Some(crtc),
+            } => {
+                info!(
+                    "Connector {}-{} connected to CRTC {:?}",
+                    connector.interface().as_str(),
+                    connector.interface_id(),
+                    crtc
+                );
+                connector_connected(state, node, connector, crtc);
+            }
+            DrmScanEvent::Disconnected {
+                connector,
+                crtc: Some(crtc),
+            } => {
+                info!(
+                    "Connector {}-{} disconnected from CRTC {:?}",
+                    connector.interface().as_str(),
+                    connector.interface_id(),
+                    crtc
+                );
+                connector_disconnected(state, node, connector, crtc);
+            }
+            _ => {
+                debug!("Unhandled connector event: {:?}", event);
+            }
+        }
+    }
+}
+
+/// Handle connector connection
+fn connector_connected(
+    state: &mut DrmCompositorState,
+    node: DrmNode,
+    connector: connector::Info,
+    crtc: crtc::Handle,
+) {
+    info!(
+        "Setting up connector: {}-{} on CRTC {:?}",
+        connector.interface().as_str(),
+        connector.interface_id(),
+        crtc
+    );
+    
+    // TODO: Implement full connector setup
+    // 1. Get connector properties
+    // 2. Select display mode
+    // 3. Create Wayland Output
+    // 4. Create DRM surface
+    // 5. Set up DrmCompositor
+    // 6. Store SurfaceData
+    
+    warn!("Connector setup not yet implemented");
+}
+
+/// Handle connector disconnection
+fn connector_disconnected(
+    _state: &mut DrmCompositorState,
+    node: DrmNode,
+    connector: connector::Info,
+    crtc: crtc::Handle,
+) {
+    info!(
+        "Disconnecting connector: {}-{} from CRTC {:?}",
+        connector.interface().as_str(),
+        connector.interface_id(),
+        crtc
+    );
+    
+    // TODO: Clean up surface, remove output
 }
 
 /// Device addition handler
@@ -433,6 +526,7 @@ fn device_added(
         gbm,
         render_node,
         registration_token,
+        drm_scanner: DrmScanner::new(),
         surfaces: HashMap::new(),
     };
 
