@@ -1,6 +1,8 @@
 mod state;
 mod winit;
 mod drm;
+mod drm_minimal;
+// mod drm_new; // TODO: Enable once trait implementations are complete
 
 use tracing_subscriber::fmt;
 
@@ -25,10 +27,21 @@ fn main() {
     
     if use_drm {
         tracing::info!("🖥️  Using DRM/KMS backend (native TTY mode)");
-        if let Err(err) = drm::init_drm() {
-            tracing::error!("Failed to initialize DRM backend: {}", err);
+        
+        // Run minimal DRM test to validate environment
+        tracing::info!("Running minimal DRM test...");
+        if let Err(err) = drm_minimal::test_drm_minimal() {
+            tracing::error!("DRM minimal test failed: {}", err);
+            tracing::error!("Fix environment issues before proceeding");
             std::process::exit(1);
         }
+        
+        tracing::info!("✅ DRM test passed.");
+        tracing::info!("");
+        tracing::info!("Next steps:");
+        tracing::info!("  1. Implement trait handlers for DrmCompositorState in drm_new.rs");
+        tracing::info!("  2. Complete device_added() function");
+        tracing::info!("  3. Add rendering loop and frame presentation");
     } else {
         tracing::info!("🪟 Using winit backend (nested mode)");
         if let Err(err) = winit::init_winit() {

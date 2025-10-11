@@ -1,14 +1,19 @@
+// DRM/KMS Backend - BEING REWRITTEN
+// This file is being replaced with Anvil-based implementation
+// See drm_minimal.rs for the new approach
+
+#![allow(dead_code, unused_imports, unused_variables)]
+
 use smithay::{
     backend::{
         allocator::gbm::GbmDevice,
         drm::{DrmDevice, DrmDeviceFd, DrmEvent, DrmNode, NodeType},
         egl::{EGLContext, EGLDisplay},
-        input::LibinputInputBackend,
+        libinput::LibinputInputBackend,
         renderer::{gles::GlesRenderer, Bind, Frame, Renderer},
         session::{libseat::LibSeatSession, Session},
         udev::{all_gpus, primary_gpu, UdevBackend, UdevEvent},
     },
-    input::event::Event as InputEvent,
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
         calloop::EventLoop,
@@ -34,7 +39,17 @@ struct DrmBackendData {
     _render_node: DrmNode,
 }
 
-pub fn init_drm() -> Result<(), Box<dyn std::error::Error>> {
+/// Initialize DRM/KMS backend
+/// This is being rewritten based on Anvil's approach
+pub fn init_drm() -> anyhow::Result<()> {
+    // TODO: Implement full DRM backend
+    // For now, see drm_minimal.rs for basic tests
+    unimplemented!("DRM backend being rewritten - use drm_minimal for now");
+}
+
+/*
+// OLD IMPLEMENTATION - Being replaced
+pub fn init_drm_old() -> anyhow::Result<()> {
     tracing::info!("🚀 Initializing DRM/KMS backend");
     
     // Create event loop
@@ -59,30 +74,17 @@ pub fn init_drm() -> Result<(), Box<dyn std::error::Error>> {
     
     // Initialize libinput for keyboard/mouse input
     tracing::info!("Initializing libinput...");
-    let mut libinput_context = Libinput::new_with_udev(session.clone().into());
-    libinput_context.udev_assign_seat(&seat_name)?;
+    let mut libinput_context: Libinput = Libinput::new_with_udev(session.clone().into());
+    libinput_context.udev_assign_seat(&seat_name)
+        .map_err(|_| "Failed to assign seat to libinput")?;
     
     let libinput_backend = LibinputInputBackend::new(libinput_context);
     
     // Add input event handler to event loop
-    loop_handle.insert_source(libinput_backend, move |event, _, state| {
-        match event {
-            InputEvent::Keyboard { event } => {
-                tracing::info!("Keyboard event: {:?}", event);
-                // Handle keyboard input - for now just log it
-            }
-            InputEvent::PointerMotion { event } => {
-                tracing::debug!("Pointer motion: {:?}", event);
-                // Handle pointer motion
-            }
-            InputEvent::PointerButton { event } => {
-                tracing::info!("Pointer button: {:?}", event);
-                // Handle pointer clicks
-            }
-            _ => {
-                tracing::debug!("Other input event");
-            }
-        }
+    loop_handle.insert_source(libinput_backend, move |event, _, _state| {
+        tracing::info!("Input event: {:?}", event);
+        // For now, just log all input events
+        // TODO: Process keyboard/mouse events properly
     })?;
     
     tracing::info!("✅ Input handling initialized");
@@ -290,3 +292,4 @@ fn device_added(
         _render_node: node,
     })
 }
+*/

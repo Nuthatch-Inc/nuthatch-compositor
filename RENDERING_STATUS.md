@@ -17,6 +17,7 @@ The compositor rendering pipeline is **fully implemented** and **functioning cor
 **Window content doesn't update on screen** when running nested on Wayland via winit backend.
 
 ### Symptoms:
+
 - Window appears in KDE taskbar ✓
 - Window has decorations/chrome ✓
 - Window shows **static snapshot** of what was behind it at launch
@@ -40,7 +41,7 @@ The rendering **IS** happening (proven by successful GL commands), but the host 
 ```
 INFO: Rendering frame 0 at size Size { w: 1280, h: 800 }
 INFO: Frame 0 cleared successfully
-INFO: Frame 0 finished successfully  
+INFO: Frame 0 finished successfully
 INFO: Frame 0 submitted successfully with damage
 ```
 
@@ -49,12 +50,14 @@ All operations report success, but visual output doesn't appear.
 ## Why This Happens
 
 Nested Wayland compositors are complex because:
+
 - We're a Wayland server (for our clients)
 - But also a Wayland client (to the host compositor)
 - Smithay's winit backend handles the client side
 - But buffer presentation requires careful synchronization
 
 The winit backend may need:
+
 - Explicit window update requests
 - Double buffering configuration
 - Specific EGL surface setup
@@ -63,19 +66,24 @@ The winit backend may need:
 ## Solutions
 
 ### Option 1: DRM/KMS Backend (Recommended for Production)
+
 Run the compositor directly on hardware without nesting:
+
 - Full control of display
 - Direct GPU access
 - Real compositor behavior
 - This is how it will work in production
 
 ### Option 2: X11 Backend (Development Alternative)
+
 - Nested X11 compositors are simpler
 - Better tested in Smithay
 - Might work better for development
 
 ### Option 3: Debug Winit Backend
+
 Investigate why `backend.submit()` doesn't update the window:
+
 - Check if we need to call winit window update
 - Verify EGL surface configuration
 - Test with explicit `glFlush()`/`glFinish()`
@@ -91,18 +99,21 @@ Investigate why `backend.submit()` doesn't update the window:
 ## Technical Details
 
 ### Backend
+
 - winit v0.30.12
 - Running on KDE Plasma (Wayland session)
 - Fedora 42, Mesa 25.1.9
 - AMD Radeon 890M Graphics
 
 ### Rendering
+
 - OpenGL ES 3.2
 - GlesRenderer
 - EGL 1.5
 - Clear color: [0.1, 0.1, 0.3, 1.0] (dark blue)
 
 ### Code Location
+
 - `src/winit.rs`: Main rendering loop
 - Lines 102-165: Rendering implementation
 - Proper scope management for borrow checker

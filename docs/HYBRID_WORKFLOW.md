@@ -5,6 +5,7 @@
 Develop compositor features in VS Code GUI, then switch to TTY for testing on real hardware.
 
 **Best of both worlds:**
+
 - ✅ Full VS Code features (Copilot, debugging, extensions)
 - ✅ Real hardware testing with DRM/KMS
 - ✅ Fast iteration cycle
@@ -15,6 +16,7 @@ Develop compositor features in VS Code GUI, then switch to TTY for testing on re
 ## Quick Reference
 
 ### Development Cycle
+
 ```
 1. Edit in VS Code → Save (Ctrl+S)
 2. Switch to TTY2 → Ctrl+Alt+F2
@@ -28,12 +30,14 @@ Develop compositor features in VS Code GUI, then switch to TTY for testing on re
 ### Key Commands
 
 **From GUI (VS Code terminal):**
+
 ```bash
 cargo check                              # Quick syntax check
 cargo build --release                    # Build for testing
 ```
 
 **From TTY:**
+
 ```bash
 cd ~/src/nuthatch-compositor
 sudo ./run-tty.sh                        # Run compositor on hardware
@@ -60,6 +64,7 @@ sudo usermod -a -G render $USER
 ```
 
 Verify:
+
 ```bash
 groups | grep -E "video|input|render"
 ```
@@ -67,6 +72,7 @@ groups | grep -E "video|input|render"
 ### 2. Log to File
 
 We already configured this in the code. Logs go to:
+
 - `/tmp/nuthatch-compositor.log`
 
 ### 3. Prepare TTY3
@@ -117,17 +123,20 @@ cargo build --release
 ### Phase 1: Implement in VS Code
 
 1. **Open VS Code to compositor project:**
+
    ```bash
    code ~/src/nuthatch-compositor
    ```
 
 2. **Make changes:**
+
    - Use VS Code Copilot for suggestions
    - Full IntelliSense and error checking
    - Git integration
    - Terminal at bottom for quick builds
 
 3. **Quick validation:**
+
    ```bash
    # In VS Code terminal (Ctrl+`)
    cargo check
@@ -142,37 +151,44 @@ cargo build --release
 ### Phase 2: Test in TTY
 
 1. **Switch to TTY3:**
+
    ```
    Ctrl + Alt + F3
    ```
 
 2. **Navigate and build:**
+
    ```bash
    cd ~/src/nuthatch-compositor
    cargo build --release
    ```
 
 3. **Run compositor:**
+
    ```bash
    sudo RUST_LOG=info cargo run --release
    ```
 
    **What happens:**
+
    - Screen goes black briefly
    - Your compositor takes over the display
    - Full screen dark blue (or whatever you render)
 
 4. **Test features:**
+
    - Keyboard input
    - Mouse movement
    - Window management (if implemented)
 
 5. **Stop compositor:**
+
    ```
    Ctrl + C
    ```
 
 6. **Check logs:**
+
    ```bash
    tail -50 /tmp/nuthatch-compositor.log
    ```
@@ -185,6 +201,7 @@ cargo build --release
 ### Phase 3: Debug and Iterate
 
 Back in VS Code:
+
 1. Review logs
 2. Make fixes
 3. Save
@@ -195,10 +212,12 @@ Back in VS Code:
 ### If Compositor Crashes
 
 **Scenario 1: Clean exit (Ctrl+C works)**
+
 - You're returned to TTY shell
 - Check logs, switch back to GUI
 
 **Scenario 2: Display frozen**
+
 ```
 1. Try: Ctrl+C (multiple times)
 2. Try: Ctrl+Alt+F4 (switch to TTY4)
@@ -207,6 +226,7 @@ Back in VS Code:
 ```
 
 **Scenario 3: Total freeze**
+
 ```
 1. Try: Ctrl+Alt+Del (clean reboot)
 2. Hold power button for 5 seconds (hard reboot)
@@ -250,6 +270,7 @@ sudo systemctl restart sddm
 ### 1. Keep Build Artifacts
 
 Don't clean between builds:
+
 ```bash
 # DON'T do this unless necessary:
 # cargo clean
@@ -261,6 +282,7 @@ Don't clean between builds:
 ### 2. Build Before Testing
 
 Always build in VS Code before switching to TTY:
+
 ```bash
 # In VS Code terminal
 cargo build --release 2>&1 | tail -20
@@ -276,12 +298,14 @@ Subsequent builds are fast (~5-30 seconds for your changes).
 ### 4. Parallel Development
 
 Have two shells in VS Code:
+
 - **Shell 1:** Main development
 - **Shell 2:** `tail -f /tmp/nuthatch-compositor.log`
 
 ### 5. Quick Syntax Check
 
 Before building:
+
 ```bash
 cargo check  # Much faster than build
 ```
@@ -346,6 +370,7 @@ git push
 ### Real-time Log Viewing
 
 **Option 1: Second terminal in VS Code**
+
 ```bash
 # Terminal 1: Development
 cargo check
@@ -355,6 +380,7 @@ tail -f /tmp/nuthatch-compositor.log
 ```
 
 **Option 2: After running in TTY**
+
 ```bash
 # Back in GUI, check what happened
 cat /tmp/nuthatch-compositor.log | tail -100
@@ -410,11 +436,13 @@ cargo build --release
 ### Compositor starts but shows black screen
 
 Check logs:
+
 ```bash
 tail -100 /tmp/nuthatch-compositor.log | grep ERROR
 ```
 
 Common issues:
+
 - EGL initialization failed
 - No connected displays found
 - Permission issues with DRM

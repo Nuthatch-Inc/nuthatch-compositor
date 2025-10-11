@@ -1012,12 +1012,14 @@ dependencies = [
 name = "nuthatch-compositor"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "calloop 0.14.3",
  "slog",
  "slog-async",
  "slog-term",
  "smithay",
  "smithay-drm-extras",
+ "thiserror 2.0.17",
  "tracing",
  "tracing-subscriber",
  "winit",
