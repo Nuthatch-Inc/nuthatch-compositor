@@ -26,15 +26,20 @@ Develop compositor features in VS Code GUI, then switch to TTY for testing on re
 ```
 
 ### Key Commands
+
+**From GUI (VS Code terminal):**
 ```bash
-# Build only (fast feedback)
-cargo check
+cargo check                              # Quick syntax check
+cargo build --release                    # Build for testing
+```
 
-# Build for testing
-cargo build --release
+**From TTY:**
+```bash
+cd ~/src/nuthatch-compositor
+sudo ./run-tty.sh                        # Run compositor on hardware
 
-# Run on hardware
-sudo RUST_LOG=info cargo run --release
+# Or use full command:
+sudo -E RUST_LOG=info ~/.cargo/bin/cargo run --release
 
 # View logs in real-time
 tail -f /tmp/nuthatch-compositor.log
