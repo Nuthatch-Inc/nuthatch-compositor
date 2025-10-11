@@ -27,7 +27,7 @@ use smithay::{
             compositor::DrmCompositor,
             CreateDrmNodeError, DrmDevice, DrmDeviceFd, DrmEvent, DrmNode, NodeType,
             exporter::gbm::GbmFramebufferExporter,
-            output::DrmOutputManager,
+            output::{DrmOutput, DrmOutputManager, DrmOutputRenderElements},
         },
         egl::{EGLContext, EGLDevice, EGLDisplay},
         input::InputEvent,
@@ -116,7 +116,7 @@ struct BackendData {
 /// Data for a single display output
 struct SurfaceData {
     output: Output,
-    // TODO: Add DrmCompositor and rendering state when implementing frame_finish
+    // TODO: DRM output will be initialized during first render
 }
 
 /// Main DRM backend state
@@ -483,9 +483,12 @@ fn connector_connected(
         output_name, position, wl_mode.size.w, wl_mode.size.h
     );
     
-    // Store surface data
+    info!("✅ DRM output manager will be initialized during first render");
+    
+    // Store surface data (DRM output will be created during rendering)
+    // For now, we'll just store the output - rendering will be implemented next
     let surface = SurfaceData {
-        output,
+        output: output.clone(),
     };
     
     device.surfaces.insert(crtc.into(), surface);
