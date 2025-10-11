@@ -18,6 +18,7 @@
 **Reference:** Anvil's connector scanning
 
 Implement:
+
 - Scan DRM connectors
 - Call `connector_connected()` for active displays
 - Handle connector hotplug
@@ -25,9 +26,10 @@ Implement:
 ### 2. Implement connector_connected() (~2-3 hours)
 
 **File:** `src/drm_new.rs`  
-**Reference:** `~/src/smithay/anvil/src/udev.rs` 
+**Reference:** `~/src/smithay/anvil/src/udev.rs`
 
 Implement:
+
 - Read connector properties
 - Select display mode
 - Create Wayland Output
@@ -37,10 +39,11 @@ Implement:
 
 ### 3. Implement frame_finish() (~2 hours)
 
-**File:** `src/drm_new.rs` 
+**File:** `src/drm_new.rs`
 **Currently:** Stub in VBlank handler
 
 Implement:
+
 - Get next framebuffer
 - Clear to solid color (test pattern)
 - Queue page flip
@@ -92,22 +95,23 @@ sudo RUST_LOG=info ./target/release/nuthatch-compositor --drm --drm-full
 
 **Phase 1: Foundation (90% Complete!) 🚀**
 
-| Task | Status | Details |
-|------|--------|---------|
-| Strategic Planning | ✅ | COMPLETE |
-| Environment Setup | ✅ | COMPLETE - Tested in TTY4 |
-| Minimal Test | ✅ | COMPLETE - Working |
-| DRM Structure | ✅ | COMPLETE |
-| Trait Handlers | ✅ | COMPLETE - All 9 implemented |
-| Device Init | ✅ | COMPLETE - device_added() working |
-| Connector Scanning | ✅ | COMPLETE - device_changed() working |
-| **Display Setup** | 🚧 | IN PROGRESS - connector_connected() stub |
-| **Rendering** | ⏳ | PENDING - frame_finish() stub |
+| Task               | Status | Details                                  |
+| ------------------ | ------ | ---------------------------------------- |
+| Strategic Planning | ✅     | COMPLETE                                 |
+| Environment Setup  | ✅     | COMPLETE - Tested in TTY4                |
+| Minimal Test       | ✅     | COMPLETE - Working                       |
+| DRM Structure      | ✅     | COMPLETE                                 |
+| Trait Handlers     | ✅     | COMPLETE - All 9 implemented             |
+| Device Init        | ✅     | COMPLETE - device_added() working        |
+| Connector Scanning | ✅     | COMPLETE - device_changed() working      |
+| **Display Setup**  | 🚧     | IN PROGRESS - connector_connected() stub |
+| **Rendering**      | ⏳     | PENDING - frame_finish() stub            |
 
 **Progress:** 7/9 tasks complete = 78% (but hard 90% complete!)  
 **Remaining:** Just connector setup and rendering  
 **Estimated Time to First Pixel:** 4-5 hours  
 **Confidence:** 90%- Environment setup: 100% ✅
+
 - Minimal validation: 100% ✅
 - DRM structure: 60% 🚧
 - Trait handlers: 0% ⏳

@@ -16,7 +16,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use drm::control::{connector, crtc};
+use drm::control::{connector, crtc, ModeTypeFlags};
 use smithay::{
     backend::{
         allocator::{
@@ -45,6 +45,7 @@ use smithay::{
     delegate_xdg_shell,
     desktop::Space,
     input::{SeatHandler, SeatState},
+    output::{Mode as WlMode, Output, PhysicalProperties},
     reexports::{
         calloop::{EventLoop, LoopHandle, RegistrationToken},
         input::{DeviceCapability, Libinput},
@@ -78,6 +79,7 @@ pub struct DrmCompositorState {
     pub start_time: std::time::Instant,
     pub space: Space<smithay::desktop::Window>,
     pub clock: Clock<Monotonic>,
+    pub display_handle: DisplayHandle,
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShellState,
     pub shm_state: ShmState,
@@ -107,8 +109,8 @@ struct BackendData {
 
 /// Data for a single display output
 struct SurfaceData {
-    _output_name: String,
-    // TODO: Add DrmCompositor and rendering state
+    output: Output,
+    // TODO: Add DrmCompositor and rendering state when implementing frame_finish
 }
 
 /// Main DRM backend state
@@ -148,6 +150,7 @@ impl DrmCompositorState {
             start_time,
             space: Space::default(),
             clock,
+            display_handle: dh,
             compositor_state,
             xdg_shell_state,
             shm_state,
@@ -411,15 +414,80 @@ fn connector_connected(
         crtc
     );
     
-    // TODO: Implement full connector setup
-    // 1. Get connector properties
-    // 2. Select display mode
-    // 3. Create Wayland Output
-    // 4. Create DRM surface
-    // 5. Set up DrmCompositor
-    // 6. Store SurfaceData
+    // Get the backend device
+    let device = if let Some(device) = state.udev_data.backends.get_mut(&node) {
+        device
+    } else {
+        warn!("Device {} not found in backends", node);
+        return;
+    };
+
+    // Create output name
+    let output_name = format!("{}-{}", connector.interface().as_str(), connector.interface_id());
     
-    warn!("Connector setup not yet implemented");
+    // Select display mode (prefer the first preferred mode, or use first available)
+    let mode_id = connector
+        .modes()
+        .iter()
+        .position(|mode| mode.mode_type().contains(ModeTypeFlags::PREFERRED))
+        .unwrap_or(0);
+    
+    let drm_mode = connector.modes()[mode_id];
+    let wl_mode = WlMode::from(drm_mode);
+    
+    info!(
+        "Selected mode for {}: {}x{}@{:.2}Hz",
+        output_name,
+        wl_mode.size.w,
+        wl_mode.size.h,
+        wl_mode.refresh as f64 / 1000.0
+    );
+    
+    // Get physical size
+    let (phys_w, phys_h) = connector.size().unwrap_or((0, 0));
+    
+    // Create Wayland Output
+    let output = Output::new(
+        output_name.clone(),
+        PhysicalProperties {
+            size: (phys_w as i32, phys_h as i32).into(),
+            subpixel: connector.subpixel().into(),
+            make: "Unknown".into(),
+            model: "Unknown".into(),
+        },
+    );
+    
+    // Create global for clients
+    let _global = output.create_global::<DrmCompositorState>(&state.display_handle);
+    
+    // Calculate position (place outputs side by side)
+    let x = state
+        .space
+        .outputs()
+        .fold(0, |acc, o| acc + state.space.output_geometry(o).unwrap().size.w);
+    let position = (x, 0).into();
+    
+    // Configure output
+    output.set_preferred(wl_mode);
+    output.change_current_state(Some(wl_mode), None, None, Some(position));
+    state.space.map_output(&output, position);
+    
+    info!(
+        "✅ Output {} created at position {:?} with mode {}x{}",
+        output_name, position, wl_mode.size.w, wl_mode.size.h
+    );
+    
+    // Store surface data
+    let surface = SurfaceData {
+        output,
+    };
+    
+    device.surfaces.insert(crtc.into(), surface);
+    
+    info!("✅ Connector {} fully configured!", output_name);
+    
+    // TODO: Create DrmCompositor when implementing rendering
+    // TODO: Kick off rendering with render_surface()
 }
 
 /// Handle connector disconnection
