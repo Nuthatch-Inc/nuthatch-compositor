@@ -608,6 +608,10 @@ fn connector_connected(
     info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     info!("✅ CONNECTOR_CONNECTED COMPLETE: {}", output_name);
     info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    
+    // Trigger initial render to start VBlank cycle
+    info!("🎬 Triggering initial render to start VBlank events...");
+    render_surface(state, node, crtc);
 }
 
 /// Handle connector disconnection
