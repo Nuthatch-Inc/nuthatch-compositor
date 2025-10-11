@@ -1,5 +1,6 @@
 mod state;
 mod winit;
+// mod drm;  // TODO: DRM backend needs more work with Smithay 0.7 API
 
 use tracing_subscriber::fmt;
 
@@ -16,9 +17,11 @@ fn main() {
     tracing::info!("🐦 Nuthatch Compositor starting...");
     tracing::info!("Phase 1: Foundation - Window management basics");
 
-    // Run winit backend (nested compositor for development)
+    // For now, only use winit backend
+    // TODO: Implement proper DRM backend once API is sorted
+    tracing::info!("🪟 Using winit backend");
     if let Err(err) = winit::init_winit() {
-        tracing::error!("Failed to initialize compositor: {}", err);
+        tracing::error!("Failed to initialize winit backend: {}", err);
         std::process::exit(1);
     }
 }

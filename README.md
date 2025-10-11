@@ -14,13 +14,18 @@ A custom Wayland compositor built with Smithay for the Nuthatch Desktop Linux po
 
 **Phase 1: Foundation** - In Progress
 
-Current tasks:
-
+Current focus:
 - [x] Project setup with Smithay
+- [x] Winit backend for nested development (rendering issues in Wayland)
+- [x] TTY environment setup and testing
+- [x] Verified DRM works (Anvil runs successfully in TTY4)
+- [ ] Implement DRM/KMS backend for native TTY rendering
 - [ ] Basic window rendering
 - [ ] Window focus and stacking
 - [ ] Keyboard and mouse input
 - [ ] Basic window management (open, close, move, resize)
+
+See `docs/DRM_PROGRESS.md` for detailed status on DRM backend implementation.
 
 ## Building
 
