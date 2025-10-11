@@ -62,7 +62,7 @@ pub fn init_winit() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Output created and mapped");
     tracing::info!("Compositor ready - clients can connect");
 
-    let _damage_tracker = OutputDamageTracker::from_output(&output);
+    let mut damage_tracker = OutputDamageTracker::from_output(&output);
 
     // Main event loop
     let mut frame_count = 0u64;
@@ -96,10 +96,74 @@ pub fn init_winit() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
 
+        // Always render to make window visible
+        needs_redraw = true;
+
         // Render frame if needed
         if needs_redraw {
-            // TODO: Implement proper rendering here
-            // Currently skipping rendering - window will be invisible but compositor works
+            // Get size before binding to avoid borrow checker issues
+            let size = backend.window_size();
+            
+            // Log rendering attempt on first few frames
+            if frame_count < 5 {
+                tracing::info!("Rendering frame {} at size {:?}", frame_count, size);
+            }
+            
+            // Bind the backend to get renderer and target
+            let mut render_success = false;
+            {
+                match backend.bind() {
+                    Ok((renderer, mut target)) => {
+                        // Render a frame with a dark blue background
+                        match renderer.render(
+                            &mut target,
+                            size.to_logical(1).to_physical(1),
+                            Transform::Normal,
+                        ) {
+                            Ok(mut frame) => {
+                                // Clear the screen with a nice dark blue color
+                                if let Err(e) = frame.clear([0.1, 0.1, 0.3, 1.0].into(), &[]) {
+                                    tracing::warn!("Failed to clear frame: {}", e);
+                                } else if frame_count < 5 {
+                                    tracing::info!("Frame {} cleared successfully", frame_count);
+                                }
+                                
+                                // Finish the frame - this commits the rendering
+                                match frame.finish() {
+                                    Ok(_sync_point) => {
+                                        if frame_count < 5 {
+                                            tracing::info!("Frame {} finished successfully", frame_count);
+                                        }
+                                        render_success = true;
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!("Failed to finish frame: {}", e);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!("Failed to start rendering: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to bind backend: {}", e);
+                    }
+                }
+            } // Drop all borrows here
+            
+            // Now submit to actually present to screen with full window damage
+            if render_success {
+                // Create damage rect for the entire window
+                use smithay::utils::{Rectangle, Physical};
+                let damage = Rectangle::from_loc_and_size((0, 0), size);
+                
+                if let Err(e) = backend.submit(Some(&[damage])) {
+                    tracing::warn!("Failed to submit frame: {}", e);
+                } else if frame_count < 5 {
+                    tracing::info!("Frame {} submitted successfully with damage", frame_count);
+                }
+            }
         }
 
         // Flush clients
