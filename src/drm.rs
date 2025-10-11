@@ -3,14 +3,17 @@ use smithay::{
         allocator::gbm::GbmDevice,
         drm::{DrmDevice, DrmDeviceFd, DrmEvent, DrmNode, NodeType},
         egl::{EGLContext, EGLDisplay},
+        input::LibinputInputBackend,
         renderer::{gles::GlesRenderer, Bind, Frame, Renderer},
         session::{libseat::LibSeatSession, Session},
         udev::{all_gpus, primary_gpu, UdevBackend, UdevEvent},
     },
+    input::event::Event as InputEvent,
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
         calloop::EventLoop,
         drm::control::{connector, crtc, Device, ModeTypeFlags},
+        input::Libinput,
         rustix::fs::OFlags,
         wayland_server::Display,
     },
@@ -53,6 +56,36 @@ pub fn init_drm() -> Result<(), Box<dyn std::error::Error>> {
     
     let seat_name = session.seat();
     tracing::info!("Session started on seat: {}", seat_name);
+    
+    // Initialize libinput for keyboard/mouse input
+    tracing::info!("Initializing libinput...");
+    let mut libinput_context = Libinput::new_with_udev(session.clone().into());
+    libinput_context.udev_assign_seat(&seat_name)?;
+    
+    let libinput_backend = LibinputInputBackend::new(libinput_context);
+    
+    // Add input event handler to event loop
+    loop_handle.insert_source(libinput_backend, move |event, _, state| {
+        match event {
+            InputEvent::Keyboard { event } => {
+                tracing::info!("Keyboard event: {:?}", event);
+                // Handle keyboard input - for now just log it
+            }
+            InputEvent::PointerMotion { event } => {
+                tracing::debug!("Pointer motion: {:?}", event);
+                // Handle pointer motion
+            }
+            InputEvent::PointerButton { event } => {
+                tracing::info!("Pointer button: {:?}", event);
+                // Handle pointer clicks
+            }
+            _ => {
+                tracing::debug!("Other input event");
+            }
+        }
+    })?;
+    
+    tracing::info!("✅ Input handling initialized");
     
     // Find primary GPU  
     let primary_gpu = primary_gpu(&seat_name)?
