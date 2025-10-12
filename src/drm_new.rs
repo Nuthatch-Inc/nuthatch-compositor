@@ -642,20 +642,9 @@ fn render_surface(
     info!("   Node: {}, CRTC: {:?}", node, crtc);
     info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     
-    // Get backend
-    let device = match state.udev_data.backends.get_mut(&node) {
-        Some(d) => {
-            info!("✅ Found device in backends");
-            d
-        }
-        None => {
-            error!("❌ Device {} not found during rendering", node);
-            return;
-        }
-    };
-    
-    // Check if we need to initialize DRM output first
-    let needs_init = device.surfaces.get(&(crtc.into()))
+    // Check if DRM output needs initialization (don't hold device borrow)
+    let needs_init = state.udev_data.backends.get(&node)
+        .and_then(|d| d.surfaces.get(&(crtc.into())))
         .map(|s| s.drm_output.is_none())
         .unwrap_or(false);
     
@@ -663,15 +652,17 @@ fn render_surface(
         // Initialize DRM output on first render
         info!("🎨 Initializing DRM output for first render!");
         
-        // Get the surface's render node BEFORE borrowing surface mutably
-        let render_node = device.surfaces.get(&(crtc.into()))
+        // CRITICAL: Get render_node WITHOUT holding mutable borrows
+        let render_node = state.udev_data.backends.get(&node)
+            .and_then(|d| d.surfaces.get(&(crtc.into())))
             .map(|s| s.render_node.clone())
-            .unwrap();
+            .expect("Surface must exist");
         
-        // Get renderer (requires releasing device borrow)
+        // Get renderer (accessing GPU manager - must not have device borrow active)
         let mut renderer = state.udev_data.gpus.single_renderer(&render_node).unwrap();
         
-        // Now get mutable surface reference
+        // NOW get mutable device reference for initialization
+        let device = state.udev_data.backends.get_mut(&node).expect("Device must exist");
         let surface = device.surfaces.get_mut(&(crtc.into())).unwrap();
         
         // Create empty render elements for initialization
@@ -704,15 +695,23 @@ fn render_surface(
                 return;
             }
         }
+        // device and surface borrows dropped here
     }
     
-    // Get render node and renderer (must do this BEFORE getting mutable surface reference)
-    let render_node = device.surfaces.get(&(crtc.into()))
+    // CRITICAL BORROW ORDERING:
+    // 1. Get render_node WITHOUT holding device mutable borrow
+    let render_node = state.udev_data.backends.get(&node)
+        .and_then(|d| d.surfaces.get(&(crtc.into())))
         .map(|s| s.render_node.clone())
-        .unwrap();
+        .expect("Surface must exist");
+    
+    info!("🎨 Getting renderer...");
+    // 2. Get renderer (needs access to state.udev_data.gpus)
     let mut renderer = state.udev_data.gpus.single_renderer(&render_node).unwrap();
     
-    // Now we can get mutable surface reference for rendering
+    info!("✅ Got renderer, rendering frame...");
+    // 3. NOW get mutable device/surface references (after renderer acquired)
+    let device = state.udev_data.backends.get_mut(&node).expect("Device must exist");
     let surface = device.surfaces.get_mut(&(crtc.into())).unwrap();
     let drm_output = surface.drm_output.as_mut().unwrap();
     
