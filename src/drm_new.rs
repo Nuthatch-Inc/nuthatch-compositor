@@ -706,24 +706,31 @@ fn render_surface(
     }
     
     // Get the DRM output
+    info!("Getting DRM output for rendering...");
     let drm_output = surface.drm_output.as_mut().unwrap();
+    info!("✅ Got DRM output");
     
     // Get renderer
+    info!("Getting renderer...");
     let mut renderer = state.udev_data.gpus.single_renderer(&surface.render_node).unwrap();
+    info!("✅ Got renderer");
     
     // Render frame with solid blue color (THIS WILL SHOW FIRST PIXEL!)
+    info!("🎨 Rendering frame with BLUE color!");
     let clear_color = [0.0, 0.0, 1.0, 1.0];  // RGBA - solid blue
     let elements: Vec<NuthatchRenderElements<_>> = vec![];  // No elements yet, just clear color
     
     use smithay::backend::drm::compositor::FrameFlags;
+    info!("Calling render_frame()...");
     match drm_output.render_frame(&mut renderer, &elements, clear_color, FrameFlags::empty()) {
         Ok(render_result) => {
-            trace!("Frame rendered successfully: {:?}", render_result);
+            info!("✅✅✅ FRAME RENDERED SUCCESSFULLY! {:?}", render_result);
         }
         Err(e) => {
-            warn!("Frame rendering error: {}", e);
+            error!("❌ Frame rendering error: {}", e);
         }
     }
+    info!("🏁 render_surface() complete");
 }
 
 /// Device addition handler
