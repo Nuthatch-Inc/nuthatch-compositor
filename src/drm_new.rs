@@ -728,10 +728,13 @@ fn render_surface(
         Ok(_render_result) => {
             info!("✅ Frame rendered, queuing...");
             // Frame rendered successfully, now queue it for display
-            if let Err(e) = drm_output.queue_frame(()) {
-                error!("❌ Failed to queue frame for {:?}: {}", crtc, e);
-            } else {
-                info!("✅ Frame queued successfully");
+            match drm_output.queue_frame(()) {
+                Ok(_) => {
+                    info!("✅ Frame queued - waiting for next VBlank");
+                }
+                Err(e) => {
+                    error!("❌ Failed to queue frame for {:?}: {}", crtc, e);
+                }
             }
         }
         Err(e) => {
