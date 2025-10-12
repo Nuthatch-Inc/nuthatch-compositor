@@ -706,43 +706,27 @@ fn render_surface(
     }
     
     // Get the DRM output
-    info!("Getting DRM output for rendering...");
     let drm_output = surface.drm_output.as_mut().unwrap();
-    info!("✅ Got DRM output");
     
     // Get renderer
-    info!("Getting renderer...");
     let mut renderer = state.udev_data.gpus.single_renderer(&surface.render_node).unwrap();
-    info!("✅ Got renderer");
     
-    // Render frame with BRIGHT RED color (THIS WILL SHOW FIRST PIXEL!)
-    // Using RED because it's unmistakable and easy to see
-    info!("🎨 Rendering frame with BRIGHT RED color!");
-    let clear_color = [1.0, 0.0, 0.0, 1.0];  // RGBA - bright red (alpha should be ignored for XRGB)
-    let elements: Vec<NuthatchRenderElements<_>> = vec![];  // No elements yet, just clear color
+    // Render frame with BRIGHT RED color
+    let clear_color = [1.0, 0.0, 0.0, 1.0];  // RGBA - bright red
+    let elements: Vec<NuthatchRenderElements<_>> = vec![];
     
     use smithay::backend::drm::compositor::FrameFlags;
-    info!("Calling render_frame()...");
     match drm_output.render_frame(&mut renderer, &elements, clear_color, FrameFlags::empty()) {
-        Ok(render_result) => {
-            info!("✅ Frame rendered to buffer: {:?}", render_result);
-            
-            // NOW QUEUE THE FRAME TO ACTUALLY DISPLAY IT!
-            info!("📤 Queuing frame for display (page flip)...");
-            match drm_output.queue_frame(()) {
-                Ok(()) => {
-                    info!("✅✅✅ FRAME QUEUED SUCCESSFULLY! Should trigger page flip and then VBlank events!");
-                }
-                Err(e) => {
-                    error!("❌ Failed to queue frame: {}", e);
-                }
+        Ok(_render_result) => {
+            // Frame rendered successfully, now queue it for display
+            if let Err(e) = drm_output.queue_frame(()) {
+                error!("❌ Failed to queue frame for {:?}: {}", crtc, e);
             }
         }
         Err(e) => {
-            error!("❌ Frame rendering error: {}", e);
+            error!("❌ Frame rendering error for {:?}: {}", crtc, e);
         }
     }
-    info!("🏁 render_surface() complete");
 }
 
 /// Device addition handler
@@ -792,7 +776,7 @@ fn device_added(
             notifier,
             move |event, _metadata, data: &mut DrmCompositorState| match event {
                 DrmEvent::VBlank(crtc) => {
-                    debug!("🎬 VBlank event for CRTC {:?}", crtc);
+                    info!("🎬 VBlank event for CRTC {:?}", crtc);
                     render_surface(data, node, crtc);
                 }
                 DrmEvent::Error(error) => {
