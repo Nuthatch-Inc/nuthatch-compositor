@@ -50,7 +50,7 @@ use smithay::{
     delegate_compositor, delegate_data_device, delegate_output, delegate_seat, delegate_shm,
     delegate_xdg_shell,
     desktop::Space,
-    input::{SeatHandler, SeatState},
+    input::{SeatHandler, SeatState, Seat},
     output::{Mode as WlMode, Output, PhysicalProperties},
     reexports::{
         calloop::{EventLoop, LoopHandle, RegistrationToken},
@@ -78,6 +78,14 @@ use smithay::{
     },
 };
 use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
+use smithay::backend::renderer::{
+    element::{
+        memory::MemoryRenderBuffer,
+        AsRenderElements, Kind,
+    },
+    Texture,
+};
+use smithay::utils::{Logical, Point, Scale, Physical, Transform};
 use tracing::{debug, error, info, trace, warn};
 
 /// Convert HSV hue (0-360) to RGB (0.0-1.0) with full saturation and value
@@ -115,6 +123,60 @@ impl<R: smithay::backend::renderer::Renderer> std::fmt::Debug for NuthatchRender
     }
 }
 
+/// Pointer/cursor element for rendering the mouse cursor
+pub struct PointerElement {
+    buffer: Option<MemoryRenderBuffer>,
+}
+
+impl Default for PointerElement {
+    fn default() -> Self {
+        Self {
+            buffer: None,
+        }
+    }
+}
+
+impl PointerElement {
+    pub fn set_buffer(&mut self, buffer: MemoryRenderBuffer) {
+        self.buffer = Some(buffer);
+    }
+}
+
+impl<T, R> AsRenderElements<R> for PointerElement
+where
+    T: Texture + Clone + Send + 'static,
+    R: smithay::backend::renderer::Renderer<TextureId = T> + ImportMem,
+{
+    type RenderElement = MemoryRenderBufferRenderElement<R>;
+    
+    fn render_elements<E>(
+        &self,
+        renderer: &mut R,
+        location: Point<i32, Physical>,
+        scale: Scale<f64>,
+        _alpha: f32,
+    ) -> Vec<E>
+    where
+        E: From<MemoryRenderBufferRenderElement<R>>,
+    {
+        if let Some(buffer) = &self.buffer {
+            vec![MemoryRenderBufferRenderElement::from_buffer(
+                renderer,
+                location.to_f64(),
+                buffer,
+                None,
+                None,
+                None,
+                Kind::Cursor,
+            )
+            .expect("Failed to create cursor render element")
+            .into()]
+        } else {
+            vec![]
+        }
+    }
+}
+
 // Simplified state for DRM backend (without the full NuthatchState complexity)
 pub struct DrmCompositorState {
     pub start_time: std::time::Instant,
@@ -126,9 +188,15 @@ pub struct DrmCompositorState {
     pub shm_state: ShmState,
     pub output_manager_state: OutputManagerState,
     pub seat_state: SeatState<DrmCompositorState>,
+    pub seat: Seat<DrmCompositorState>,  // Store the seat for easy access
     pub data_device_state: DataDeviceState,
     pub udev_data: UdevData,
     pub frame_count: u64,  // Frame counter for animation
+    pub running: bool,  // Track if compositor should keep running
+    pub pointer_location: Point<f64, Logical>,  // Current cursor position
+    pub cursor: crate::cursor::Cursor,  // Cursor theme and images
+    pub pointer_element: PointerElement,  // Cursor rendering element
+    pub pointer_image: Option<MemoryRenderBuffer>,  // Cached cursor image
 }
 
 // Supported color formats - prefer 10-bit, fall back to 8-bit
@@ -201,6 +269,15 @@ impl DrmCompositorState {
         seat.add_keyboard(Default::default(), 200, 25).unwrap();
         seat.add_pointer();
 
+        // Load cursor theme
+        info!("Loading cursor theme...");
+        let cursor = crate::cursor::Cursor::load();
+        info!("✅ Cursor theme loaded");
+
+        // Initialize pointer at screen center (assuming 1920x1200 for now)
+        let pointer_location = Point::from((960.0, 600.0));
+        info!("🖱️  Initial pointer location: ({}, {})", pointer_location.x, pointer_location.y);
+
         Self {
             start_time,
             space: Space::default(),
@@ -211,9 +288,15 @@ impl DrmCompositorState {
             shm_state,
             output_manager_state,
             seat_state,
+            seat,  // Store the seat for input handling
             data_device_state,
             udev_data,
             frame_count: 0,
+            running: true,
+            pointer_location,
+            cursor,
+            pointer_element: PointerElement::default(),
+            pointer_image: None,
         }
     }
 }
@@ -327,28 +410,92 @@ pub fn run_udev() -> Result<()> {
     let libinput_backend = LibinputInputBackend::new(libinput_context.clone());
     info!("✅ Libinput initialized");
     
-    // Insert input handler into event loop
+    // Set up libinput for input events (keyboard, mouse, etc.)
     loop_handle
-        .insert_source(libinput_backend, move |event, _, _state| {
-            // TODO: Process input events properly
+        .insert_source(libinput_backend, move |event, _, state| {
+            use smithay::backend::input::{KeyState, KeyboardKeyEvent, Event as InputEventTrait};
+            use smithay::input::keyboard::FilterResult;
+            use smithay::utils::SERIAL_COUNTER;
+            
             match event {
-                InputEvent::DeviceAdded { device } => {
-                    debug!("Input device added: {:?}", device);
-                    if device.has_capability(DeviceCapability::Keyboard) {
-                        info!("Keyboard device added");
+                InputEvent::Keyboard { event } => {
+                    let keycode = event.key_code();
+                    let key_state = event.state();
+                    let time = InputEventTrait::time_msec(&event);
+                    let serial = SERIAL_COUNTER.next_serial();
+                    
+                    // Use keyboard.input() to properly update modifier state
+                    if let Some(keyboard) = state.seat.get_keyboard() {
+                        keyboard.input(
+                            state,
+                            keycode,
+                            key_state,
+                            serial,
+                            time,
+                            |_state, modifiers, handle| {
+                                // Check for exit shortcuts on key press
+                                if key_state == KeyState::Pressed {
+                                    let raw_code = keycode.raw();
+                                    let is_q = raw_code == 24;  // Q key
+                                    let is_backspace = raw_code == 22;  // Backspace
+                                    
+                                    if modifiers.ctrl && modifiers.alt && (is_q || is_backspace) {
+                                        info!("🛑 Exit key combination detected (Ctrl+Alt+{}) - shutting down gracefully",
+                                              if is_q { "Q" } else { "Backspace" });
+                                        // Signal exit - but we can't set state.running here due to borrow
+                                        // So we'll return Intercept to signal we handled it
+                                        return FilterResult::Intercept(true);
+                                    }
+                                    
+                                    // Log key presses with modifier state for debugging
+                                    let keysym = handle.modified_sym();
+                                    info!(
+                                        "⌨️  Key pressed: code={} keysym={} (ctrl={} alt={} shift={})",
+                                        raw_code,
+                                        xkbcommon::xkb::keysym_get_name(keysym),
+                                        modifiers.ctrl, modifiers.alt, modifiers.shift
+                                    );
+                                }
+                                
+                                FilterResult::Forward  // Forward other keys normally
+                            }
+                        );
+                        
+                        // Check if we should exit (ugly workaround for borrow checker)
+                        // The FilterResult::Intercept(true) signals we should exit
+                        if key_state == KeyState::Pressed {
+                            if let Some(kbd) = state.seat.get_keyboard() {
+                                let mods = kbd.modifier_state();
+                                let raw_code = keycode.raw();
+                                let is_q = raw_code == 24;
+                                let is_backspace = raw_code == 22;
+                                if mods.ctrl && mods.alt && (is_q || is_backspace) {
+                                    state.running = false;
+                                }
+                            }
+                        }
                     }
                 }
-                InputEvent::DeviceRemoved { device } => {
-                    debug!("Input device removed: {:?}", device);
+                InputEvent::DeviceAdded { device } => {
+                    info!("🔌 Input device added: {:?}", device.name());
                 }
-                InputEvent::Keyboard { event } => {
-                    debug!("Keyboard event: {:?}", event);
+                InputEvent::DeviceRemoved { device } => {
+                    info!("🔌 Input device removed: {:?}", device.name());
                 }
                 InputEvent::PointerMotion { event } => {
-                    trace!("Pointer motion: {:?}", event);
+                    use smithay::backend::input::{PointerMotionEvent};
+                    let delta = event.delta();
+                    state.pointer_location += delta;
+                    // Clamp to screen bounds (assuming 1920x1200)
+                    state.pointer_location.x = state.pointer_location.x.max(0.0).min(1920.0);
+                    state.pointer_location.y = state.pointer_location.y.max(0.0).min(1200.0);
+                    info!("🖱️  Pointer moved: delta=({:.2}, {:.2}) -> pos=({:.1}, {:.1})", 
+                           delta.x, delta.y, state.pointer_location.x, state.pointer_location.y);
                 }
                 InputEvent::PointerButton { event } => {
-                    debug!("Pointer button: {:?}", event);
+                    use smithay::backend::input::PointerButtonEvent;
+                    let button = event.button_code();
+                    debug!("🖱️  Mouse button: code={}", button);
                 }
                 _ => {}
             }
@@ -423,14 +570,20 @@ pub fn run_udev() -> Result<()> {
     
     info!("🎉 DRM backend initialized successfully!");
     info!("📊 Event loop status: Starting...");
-    info!("Compositor is running. Press Ctrl+C to exit.");
+    info!("Compositor is running. Press Ctrl+Alt+Q or Ctrl+Alt+Backspace to exit.");
     info!("⚠️  SAFETY: Will auto-exit after 10 seconds for testing");
     
-    // Main event loop - run indefinitely
+    // Main event loop - run until user quits or timeout
     info!("🔄 Entering main event loop...");
     let start_time = std::time::Instant::now();
     let mut iteration = 0u64;
     loop {
+        // Check if user requested exit via keyboard shortcut
+        if !state.running {
+            info!("👋 User requested exit - shutting down gracefully");
+            break;
+        }
+        
         // SAFETY: Auto-exit after 10 seconds to prevent hangs during testing
         if start_time.elapsed() > Duration::from_secs(10) {
             info!("⏱️  10 second timeout reached - exiting for safety");
@@ -753,7 +906,38 @@ fn render_surface(
     info!("   Frame #{}: hue={:.1}° color=({:.2},{:.2},{:.2})", 
           state.frame_count, hue, r, g, b);
     
-    let elements: Vec<NuthatchRenderElements<_>> = vec![];
+    // Load cursor image if not cached
+    if state.pointer_image.is_none() {
+        use smithay::backend::allocator::Fourcc;
+        // Use scale 2 for a larger, more visible cursor (48x48 instead of 24x24)
+        let cursor_image = state.cursor.get_image(2, Duration::ZERO);
+        let buffer = MemoryRenderBuffer::from_slice(
+            &cursor_image.pixels_rgba,
+            Fourcc::Argb8888,
+            (cursor_image.width as i32, cursor_image.height as i32),
+            1,
+            Transform::Normal,
+            None,
+        );
+        state.pointer_element.set_buffer(buffer.clone());
+        state.pointer_image = Some(buffer);
+        info!("✅ Loaded cursor image ({}x{}) at scale 2", cursor_image.width, cursor_image.height);
+    }
+    
+    // Render cursor at current pointer location
+    let scale = Scale::from(1.0);
+    let cursor_pos = state.pointer_location.to_physical(scale).to_i32_round();
+    let cursor_elements: Vec<MemoryRenderBufferRenderElement<_>> = state.pointer_element
+        .render_elements(&mut renderer, cursor_pos, scale, 1.0);
+    
+    let mut elements: Vec<NuthatchRenderElements<_>> = cursor_elements
+        .into_iter()
+        .map(NuthatchRenderElements::from)
+        .collect();
+    
+    info!("🖱️  Rendering cursor at ({}, {}) - {} elements", 
+          cursor_pos.x, cursor_pos.y, elements.len());
+
     
     use smithay::backend::drm::compositor::FrameFlags;
     

@@ -3,6 +3,7 @@ mod winit;
 mod drm;
 mod drm_minimal;
 mod drm_new;
+mod cursor;
 
 use tracing_subscriber::fmt;
 
