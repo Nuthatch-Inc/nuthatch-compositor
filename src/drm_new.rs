@@ -709,28 +709,40 @@ fn render_surface(
     // 2. Get renderer (needs access to state.udev_data.gpus)
     let mut renderer = state.udev_data.gpus.single_renderer(&render_node).unwrap();
     
-    info!("✅ Got renderer, rendering frame...");
-    // 3. NOW get mutable device/surface references (after renderer acquired)
-    let device = state.udev_data.backends.get_mut(&node).expect("Device must exist");
-    let surface = device.surfaces.get_mut(&(crtc.into())).unwrap();
-    let drm_output = surface.drm_output.as_mut().unwrap();
+    info!("✅ Got renderer, now getting output...");
+    // 3. Get mutable device/surface references to extract drm_output
+    let mut drm_output = {
+        let device = state.udev_data.backends.get_mut(&node).expect("Device must exist");
+        let surface = device.surfaces.get_mut(&(crtc.into())).unwrap();
+        // Take ownership of drm_output to release device borrow
+        surface.drm_output.take().expect("DRM output must exist")
+    }; // device borrow dropped here
     
-    // Render frame with BRIGHT RED color
+    info!("🎨 Rendering frame...");
+    // Render frame with BRIGHT RED color (NO device borrow active now)
     let clear_color = [1.0, 0.0, 0.0, 1.0];  // RGBA - bright red
     let elements: Vec<NuthatchRenderElements<_>> = vec![];
     
     use smithay::backend::drm::compositor::FrameFlags;
     match drm_output.render_frame(&mut renderer, &elements, clear_color, FrameFlags::empty()) {
         Ok(_render_result) => {
+            info!("✅ Frame rendered, queuing...");
             // Frame rendered successfully, now queue it for display
             if let Err(e) = drm_output.queue_frame(()) {
                 error!("❌ Failed to queue frame for {:?}: {}", crtc, e);
+            } else {
+                info!("✅ Frame queued successfully");
             }
         }
         Err(e) => {
             error!("❌ Frame rendering error for {:?}: {}", crtc, e);
         }
     }
+    
+    // Put drm_output back
+    let device = state.udev_data.backends.get_mut(&node).expect("Device must exist");
+    let surface = device.surfaces.get_mut(&(crtc.into())).unwrap();
+    surface.drm_output = Some(drm_output);
 }
 
 /// Device addition handler
