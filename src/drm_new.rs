@@ -80,6 +80,24 @@ use smithay::{
 use smithay_drm_extras::drm_scanner::{DrmScanEvent, DrmScanner};
 use tracing::{debug, error, info, trace, warn};
 
+/// Convert HSV hue (0-360) to RGB (0.0-1.0) with full saturation and value
+fn hue_to_rgb(hue: f32) -> (f32, f32, f32) {
+    let h = hue / 60.0;
+    let c = 1.0;  // Full saturation and value
+    let x = 1.0 - (h % 2.0 - 1.0).abs();
+    
+    let (r, g, b) = match h as i32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    
+    (r, g, b)
+}
+
 // Simple render element type for our compositor
 // For now we only support memory buffer rendering (for simple shapes/colors)
 smithay::backend::renderer::element::render_elements! {
@@ -110,6 +128,7 @@ pub struct DrmCompositorState {
     pub seat_state: SeatState<DrmCompositorState>,
     pub data_device_state: DataDeviceState,
     pub udev_data: UdevData,
+    pub frame_count: u64,  // Frame counter for animation
 }
 
 // Supported color formats - prefer 10-bit, fall back to 8-bit
@@ -194,6 +213,7 @@ impl DrmCompositorState {
             seat_state,
             data_device_state,
             udev_data,
+            frame_count: 0,
         }
     }
 }
@@ -718,9 +738,21 @@ fn render_surface(
         surface.drm_output.take().expect("DRM output must exist")
     }; // device borrow dropped here
     
+    info!("🎨 Getting renderer...");
+    let mut renderer = state.udev_data.gpus.single_renderer(&state.udev_data.primary_gpu)
+        .expect("Failed to get renderer");
+    info!("✅ Got renderer, now getting output...");
+
     info!("🎨 Rendering frame...");
-    // Render frame with BRIGHT RED color (NO device borrow active now)
-    let clear_color = [1.0, 0.0, 0.0, 1.0];  // RGBA - bright red
+    // Animate color based on frame count to create changing content
+    // This ensures damage tracking detects changes and allows continuous VBlanks
+    state.frame_count += 1;
+    let hue = (state.frame_count as f32 * 2.0) % 360.0;  // Cycle through hues
+    let (r, g, b) = hue_to_rgb(hue);
+    let clear_color = [r, g, b, 1.0];
+    info!("   Frame #{}: hue={:.1}° color=({:.2},{:.2},{:.2})", 
+          state.frame_count, hue, r, g, b);
+    
     let elements: Vec<NuthatchRenderElements<_>> = vec![];
     
     use smithay::backend::drm::compositor::FrameFlags;
