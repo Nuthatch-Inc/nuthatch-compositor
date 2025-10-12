@@ -724,17 +724,28 @@ fn render_surface(
     let elements: Vec<NuthatchRenderElements<_>> = vec![];
     
     use smithay::backend::drm::compositor::FrameFlags;
-    match drm_output.render_frame(&mut renderer, &elements, clear_color, FrameFlags::empty()) {
-        Ok(_render_result) => {
-            info!("✅ Frame rendered, queuing...");
-            // Frame rendered successfully, now queue it for display
-            match drm_output.queue_frame(()) {
-                Ok(_) => {
-                    info!("✅ Frame queued - waiting for next VBlank");
+    // Use DEFAULT flags (allows scanout optimizations)
+    // Note: After first frame, damage tracking may report empty frames since nothing changes.
+    // For now we reset buffers to force full redraws, but this wastes resources.
+    // TODO: Implement proper continuous rendering without resetting buffers
+    drm_output.reset_buffers();  // Force full redraw by invalidating damage tracking
+    
+    match drm_output.render_frame(&mut renderer, &elements, clear_color, FrameFlags::DEFAULT) {
+        Ok(render_result) => {
+            info!("✅ Frame rendered (is_empty: {})", render_result.is_empty);
+            
+            // Only queue if frame has content
+            if !render_result.is_empty {
+                match drm_output.queue_frame(()) {
+                    Ok(_) => {
+                        info!("✅ Frame queued - waiting for next VBlank");
+                    }
+                    Err(e) => {
+                        error!("❌ Failed to queue frame for {:?}: {}", crtc, e);
+                    }
                 }
-                Err(e) => {
-                    error!("❌ Failed to queue frame for {:?}: {}", crtc, e);
-                }
+            } else {
+                info!("⏭️  Frame is empty (no damage), skipping queue_frame");
             }
         }
         Err(e) => {
