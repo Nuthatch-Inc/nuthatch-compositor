@@ -715,16 +715,28 @@ fn render_surface(
     let mut renderer = state.udev_data.gpus.single_renderer(&surface.render_node).unwrap();
     info!("✅ Got renderer");
     
-    // Render frame with solid blue color (THIS WILL SHOW FIRST PIXEL!)
-    info!("🎨 Rendering frame with BLUE color!");
-    let clear_color = [0.0, 0.0, 1.0, 1.0];  // RGBA - solid blue
+    // Render frame with BRIGHT RED color (THIS WILL SHOW FIRST PIXEL!)
+    // Using RED because it's unmistakable and easy to see
+    info!("🎨 Rendering frame with BRIGHT RED color!");
+    let clear_color = [1.0, 0.0, 0.0, 1.0];  // RGBA - bright red (alpha should be ignored for XRGB)
     let elements: Vec<NuthatchRenderElements<_>> = vec![];  // No elements yet, just clear color
     
     use smithay::backend::drm::compositor::FrameFlags;
     info!("Calling render_frame()...");
     match drm_output.render_frame(&mut renderer, &elements, clear_color, FrameFlags::empty()) {
         Ok(render_result) => {
-            info!("✅✅✅ FRAME RENDERED SUCCESSFULLY! {:?}", render_result);
+            info!("✅ Frame rendered to buffer: {:?}", render_result);
+            
+            // NOW QUEUE THE FRAME TO ACTUALLY DISPLAY IT!
+            info!("📤 Queuing frame for display (page flip)...");
+            match drm_output.queue_frame(()) {
+                Ok(()) => {
+                    info!("✅✅✅ FRAME QUEUED SUCCESSFULLY! Should trigger page flip and then VBlank events!");
+                }
+                Err(e) => {
+                    error!("❌ Failed to queue frame: {}", e);
+                }
+            }
         }
         Err(e) => {
             error!("❌ Frame rendering error: {}", e);
