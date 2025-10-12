@@ -654,24 +654,25 @@ fn render_surface(
         }
     };
     
-    // Get surface
-    let surface = match device.surfaces.get_mut(&(crtc.into())) {
-        Some(s) => {
-            info!("✅ Found surface for CRTC {:?}", crtc);
-            s
-        }
-        None => {
-            error!("❌ Surface not found for CRTC {:?}", crtc);
-            return;
-        }
-    };
+    // Check if we need to initialize DRM output first
+    let needs_init = device.surfaces.get(&(crtc.into()))
+        .map(|s| s.drm_output.is_none())
+        .unwrap_or(false);
     
-    // Initialize DRM output if not yet created
-    if surface.drm_output.is_none() {
+    if needs_init {
+        // Initialize DRM output on first render
         info!("🎨 Initializing DRM output for first render!");
         
-        // Get renderer
-        let mut renderer = state.udev_data.gpus.single_renderer(&surface.render_node).unwrap();
+        // Get the surface's render node BEFORE borrowing surface mutably
+        let render_node = device.surfaces.get(&(crtc.into()))
+            .map(|s| s.render_node.clone())
+            .unwrap();
+        
+        // Get renderer (requires releasing device borrow)
+        let mut renderer = state.udev_data.gpus.single_renderer(&render_node).unwrap();
+        
+        // Now get mutable surface reference
+        let surface = device.surfaces.get_mut(&(crtc.into())).unwrap();
         
         // Create empty render elements for initialization
         use smithay::backend::renderer::multigpu::MultiRenderer;
@@ -705,11 +706,15 @@ fn render_surface(
         }
     }
     
-    // Get the DRM output
-    let drm_output = surface.drm_output.as_mut().unwrap();
+    // Get render node and renderer (must do this BEFORE getting mutable surface reference)
+    let render_node = device.surfaces.get(&(crtc.into()))
+        .map(|s| s.render_node.clone())
+        .unwrap();
+    let mut renderer = state.udev_data.gpus.single_renderer(&render_node).unwrap();
     
-    // Get renderer
-    let mut renderer = state.udev_data.gpus.single_renderer(&surface.render_node).unwrap();
+    // Now we can get mutable surface reference for rendering
+    let surface = device.surfaces.get_mut(&(crtc.into())).unwrap();
+    let drm_output = surface.drm_output.as_mut().unwrap();
     
     // Render frame with BRIGHT RED color
     let clear_color = [1.0, 0.0, 0.0, 1.0];  // RGBA - bright red
