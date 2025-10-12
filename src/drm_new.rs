@@ -796,7 +796,22 @@ fn device_added(
             move |event, _metadata, data: &mut DrmCompositorState| match event {
                 DrmEvent::VBlank(crtc) => {
                     info!("🎬 VBlank event for CRTC {:?}", crtc);
+                    
+                    // CRITICAL: Mark previous frame as submitted to release buffer back to swapchain
+                    let device = data.udev_data.backends.get_mut(&node).expect("Device must exist");
+                    let surface = device.surfaces.get_mut(&(crtc.into())).expect("Surface must exist");
+                    
+                    if let Some(ref mut drm_output) = surface.drm_output {
+                        match drm_output.frame_submitted() {
+                            Ok(_) => info!("   Frame submitted, buffer released to swapchain"),
+                            Err(e) => error!("   Failed to mark frame as submitted: {:?}", e),
+                        }
+                    }
+                    
+                    // Now render the next frame
+                    info!("   Triggering render for next frame...");
                     render_surface(data, node, crtc);
+                    info!("   Render_surface completed");
                 }
                 DrmEvent::Error(error) => {
                     error!("DRM error: {:?}", error);
